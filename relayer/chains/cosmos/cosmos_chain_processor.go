@@ -506,6 +506,20 @@ func (ccp *CosmosChainProcessor) queryCycle(ctx context.Context, persistence *qu
 		return nil
 	}
 
+	ccp.publishCacheData(ctx, chainID, latestHeader, ibcMessagesCache, ibcHeaderCache)
+
+	persistence.latestQueriedBlock = newLatestQueriedBlock
+
+	return nil
+}
+
+func (ccp *CosmosChainProcessor) publishCacheData(
+	ctx context.Context,
+	chainID string,
+	latestHeader provider.TendermintIBCHeader,
+	ibcMessagesCache processor.IBCMessagesCache,
+	ibcHeaderCache processor.IBCHeaderCache,
+) {
 	for _, pp := range ccp.pathProcessors {
 		clientID := pp.RelevantClientID(chainID)
 		clientState, err := ccp.clientState(ctx, clientID)
@@ -517,7 +531,7 @@ func (ccp *CosmosChainProcessor) queryCycle(ctx context.Context, persistence *qu
 			continue
 		}
 
-		pp.HandleNewData(chainID, processor.ChainProcessorCacheData{
+		if err := pp.HandleNewDataContext(ctx, chainID, processor.ChainProcessorCacheData{
 			LatestBlock:          ccp.latestBlock,
 			LatestHeader:         latestHeader,
 			IBCMessagesCache:     ibcMessagesCache.Clone(),
@@ -526,12 +540,10 @@ func (ccp *CosmosChainProcessor) queryCycle(ctx context.Context, persistence *qu
 			ConnectionStateCache: ccp.connectionStateCache.FilterForClient(clientID),
 			ChannelStateCache:    ccp.channelStateCache.FilterForClient(clientID, ccp.channelConnections, ccp.connectionClients),
 			IBCHeaderCache:       ibcHeaderCache.Clone(),
-		})
+		}); err != nil {
+			return
+		}
 	}
-
-	persistence.latestQueriedBlock = newLatestQueriedBlock
-
-	return nil
 }
 
 func (ccp *CosmosChainProcessor) CollectMetrics(ctx context.Context, persistence *queryCyclePersistence) {

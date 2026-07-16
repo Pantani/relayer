@@ -282,17 +282,41 @@ func (pp *PathProcessor) ProcessBacklogIfReady() {
 	}
 }
 
-// ChainProcessors call this method when they have new IBC messages
+// HandleNewData preserves the original blocking enqueue contract.
+// Context-aware producers should use HandleNewDataContext.
 func (pp *PathProcessor) HandleNewData(chainID string, cacheData ChainProcessorCacheData) {
+	_ = pp.HandleNewDataContext(context.Background(), chainID, cacheData)
+}
+
+// HandleNewDataContext blocks until the data is enqueued or ctx is canceled.
+func (pp *PathProcessor) HandleNewDataContext(
+	ctx context.Context,
+	chainID string,
+	cacheData ChainProcessorCacheData,
+) error {
 	if pp.isLocalhost {
-		pp.handleLocalhostData(cacheData)
-		return
+		return pp.handleLocalhostData(ctx, cacheData)
 	}
 
 	if pp.pathEnd1.info.ChainID == chainID {
-		pp.pathEnd1.incomingCacheData <- cacheData
-	} else if pp.pathEnd2.info.ChainID == chainID {
-		pp.pathEnd2.incomingCacheData <- cacheData
+		return enqueueCacheData(ctx, pp.pathEnd1.incomingCacheData, cacheData)
+	}
+	if pp.pathEnd2.info.ChainID == chainID {
+		return enqueueCacheData(ctx, pp.pathEnd2.incomingCacheData, cacheData)
+	}
+	return nil
+}
+
+func enqueueCacheData(
+	ctx context.Context,
+	queue chan<- ChainProcessorCacheData,
+	cacheData ChainProcessorCacheData,
+) error {
+	select {
+	case queue <- cacheData:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -439,30 +463,47 @@ func (pp *PathProcessor) Run(ctx context.Context, cancel func()) {
 	}
 }
 
-func (pp *PathProcessor) handleLocalhostData(cacheData ChainProcessorCacheData) {
-	pathEnd1Cache := ChainProcessorCacheData{
-		IBCMessagesCache:     NewIBCMessagesCache(),
-		InSync:               cacheData.InSync,
-		ClientState:          cacheData.ClientState,
-		ConnectionStateCache: cacheData.ConnectionStateCache,
-		ChannelStateCache:    cacheData.ChannelStateCache,
-		LatestBlock:          cacheData.LatestBlock,
-		LatestHeader:         cacheData.LatestHeader,
-		IBCHeaderCache:       cacheData.IBCHeaderCache,
+func (pp *PathProcessor) handleLocalhostData(
+	ctx context.Context,
+	cacheData ChainProcessorCacheData,
+) error {
+	pathEnd1Cache, pathEnd2Cache := pp.splitLocalhostData(cacheData)
+	if err := enqueueCacheData(ctx, pp.pathEnd1.incomingCacheData, pathEnd1Cache); err != nil {
+		return err
 	}
-	pathEnd2Cache := ChainProcessorCacheData{
-		IBCMessagesCache:     NewIBCMessagesCache(),
-		InSync:               cacheData.InSync,
-		ClientState:          cacheData.ClientState,
-		ConnectionStateCache: cacheData.ConnectionStateCache,
-		ChannelStateCache:    cacheData.ChannelStateCache,
-		LatestBlock:          cacheData.LatestBlock,
-		LatestHeader:         cacheData.LatestHeader,
-		IBCHeaderCache:       cacheData.IBCHeaderCache,
-	}
+	return enqueueCacheData(ctx, pp.pathEnd2.incomingCacheData, pathEnd2Cache)
+}
 
+func (pp *PathProcessor) splitLocalhostData(
+	cacheData ChainProcessorCacheData,
+) (ChainProcessorCacheData, ChainProcessorCacheData) {
+	pathEnd1Cache := newLocalhostCacheData(cacheData)
+	pathEnd2Cache := newLocalhostCacheData(cacheData)
+	pp.splitLocalhostPackets(cacheData.IBCMessagesCache.PacketFlow, &pathEnd1Cache, &pathEnd2Cache)
+	pp.splitLocalhostHandshakes(cacheData.IBCMessagesCache.ChannelHandshake, &pathEnd1Cache, &pathEnd2Cache)
+	pathEnd1Cache.ChannelStateCache, pathEnd2Cache.ChannelStateCache = splitLocalhostChannelStates(cacheData.ChannelStateCache)
+	return pathEnd1Cache, pathEnd2Cache
+}
+
+func newLocalhostCacheData(cacheData ChainProcessorCacheData) ChainProcessorCacheData {
+	return ChainProcessorCacheData{
+		IBCMessagesCache:     NewIBCMessagesCache(),
+		InSync:               cacheData.InSync,
+		ClientState:          cacheData.ClientState,
+		ConnectionStateCache: cacheData.ConnectionStateCache,
+		ChannelStateCache:    cacheData.ChannelStateCache,
+		LatestBlock:          cacheData.LatestBlock,
+		LatestHeader:         cacheData.LatestHeader,
+		IBCHeaderCache:       cacheData.IBCHeaderCache,
+	}
+}
+
+func (pp *PathProcessor) splitLocalhostPackets(
+	packetFlow ChannelPacketMessagesCache,
+	pathEnd1Cache, pathEnd2Cache *ChainProcessorCacheData,
+) {
 	// split up data and send lower channel-id data to pathEnd1 and higher channel-id data to pathEnd2.
-	for k, v := range cacheData.IBCMessagesCache.PacketFlow {
+	for k, v := range packetFlow {
 		chan1, err := chantypes.ParseChannelSequence(k.ChannelID)
 		if err != nil {
 			pp.log.Error("Failed to parse channel ID int from string", zap.Error(err))
@@ -481,73 +522,118 @@ func (pp *PathProcessor) handleLocalhostData(cacheData ChainProcessorCacheData) 
 			pathEnd2Cache.IBCMessagesCache.PacketFlow[k] = v
 		}
 	}
+}
 
-	for eventType, c := range cacheData.IBCMessagesCache.ChannelHandshake {
+func (pp *PathProcessor) splitLocalhostHandshakes(
+	handshakes ChannelMessagesCache,
+	pathEnd1Cache, pathEnd2Cache *ChainProcessorCacheData,
+) {
+	for eventType, c := range handshakes {
 		for k, v := range c {
-			switch eventType {
-			case chantypes.EventTypeChannelOpenInit, chantypes.EventTypeChannelOpenAck, chantypes.EventTypeChannelCloseInit:
-				if _, ok := pathEnd1Cache.IBCMessagesCache.ChannelHandshake[eventType]; !ok {
-					pathEnd1Cache.IBCMessagesCache.ChannelHandshake[eventType] = make(ChannelMessageCache)
-				}
-				if order, ok := pp.pathEnd1.channelOrderCache[k.ChannelID]; ok {
-					v.Order = order
-				}
-				if order, ok := pp.pathEnd2.channelOrderCache[k.CounterpartyChannelID]; ok {
-					v.Order = order
-				}
-				// TODO this is insanely hacky, need to figure out how to handle the ordering dilemma on ordered chans
-				if v.Order == chantypes.NONE {
-					v.Order = chantypes.ORDERED
-				}
-				pathEnd1Cache.IBCMessagesCache.ChannelHandshake[eventType][k] = v
-			case chantypes.EventTypeChannelOpenTry, chantypes.EventTypeChannelOpenConfirm, chantypes.EventTypeChannelCloseConfirm:
-				if _, ok := pathEnd2Cache.IBCMessagesCache.ChannelHandshake[eventType]; !ok {
-					pathEnd2Cache.IBCMessagesCache.ChannelHandshake[eventType] = make(ChannelMessageCache)
-				}
-				if order, ok := pp.pathEnd2.channelOrderCache[k.ChannelID]; ok {
-					v.Order = order
-				}
-				if order, ok := pp.pathEnd1.channelOrderCache[k.CounterpartyChannelID]; ok {
-					v.Order = order
-				}
-
-				pathEnd2Cache.IBCMessagesCache.ChannelHandshake[eventType][k] = v
-			default:
-				pp.log.Error("Invalid IBC channel event type", zap.String("event_type", eventType))
-			}
+			pp.splitLocalhostHandshake(eventType, k, v, pathEnd1Cache, pathEnd2Cache)
 		}
 	}
+}
 
-	channelStateCache1 := make(map[ChannelKey]ChannelState)
-	channelStateCache2 := make(map[ChannelKey]ChannelState)
-
-	// split up data and send lower channel-id data to pathEnd2 and higher channel-id data to pathEnd1.
-	for k, v := range cacheData.ChannelStateCache {
-		chan1, err := chantypes.ParseChannelSequence(k.ChannelID)
-		chan2, secErr := chantypes.ParseChannelSequence(k.CounterpartyChannelID)
-
-		if err != nil && secErr != nil {
-			continue
-		}
-
-		// error parsing counterparty chan ID so write chan state to src cache.
-		// this should indicate that the chan handshake has not progressed past the TRY so,
-		// counterparty chan id has not been initialized yet.
-		if secErr != nil && err == nil {
-			channelStateCache1[k] = v
-			continue
-		}
-
-		if chan1 > chan2 {
-			channelStateCache2[k] = v
-		} else {
-			channelStateCache1[k] = v
-		}
+func (pp *PathProcessor) splitLocalhostHandshake(
+	eventType string,
+	key ChannelKey,
+	info provider.ChannelInfo,
+	pathEnd1Cache, pathEnd2Cache *ChainProcessorCacheData,
+) {
+	switch eventType {
+	case chantypes.EventTypeChannelOpenInit, chantypes.EventTypeChannelOpenAck, chantypes.EventTypeChannelCloseInit:
+		pp.addLocalhostPathEnd1Handshake(eventType, key, info, pathEnd1Cache)
+	case chantypes.EventTypeChannelOpenTry, chantypes.EventTypeChannelOpenConfirm, chantypes.EventTypeChannelCloseConfirm:
+		pp.addLocalhostPathEnd2Handshake(eventType, key, info, pathEnd2Cache)
+	default:
+		pp.log.Error("Invalid IBC channel event type", zap.String("event_type", eventType))
 	}
+}
 
-	pathEnd1Cache.ChannelStateCache = channelStateCache1
-	pathEnd2Cache.ChannelStateCache = channelStateCache2
+func (pp *PathProcessor) addLocalhostPathEnd1Handshake(
+	eventType string,
+	key ChannelKey,
+	info provider.ChannelInfo,
+	cacheData *ChainProcessorCacheData,
+) {
+	cache := cacheData.IBCMessagesCache.ChannelHandshake
+	ensureChannelMessageCache(cache, eventType)
+	info.Order = pp.localhostPathEnd1Order(key, info.Order)
+	cache[eventType][key] = info
+}
 
-	pp.pathEnd1.incomingCacheData <- pathEnd1Cache
-	pp.pathEnd2.incomingCacheData <- pathEnd2Cache
+func (pp *PathProcessor) addLocalhostPathEnd2Handshake(
+	eventType string,
+	key ChannelKey,
+	info provider.ChannelInfo,
+	cacheData *ChainProcessorCacheData,
+) {
+	cache := cacheData.IBCMessagesCache.ChannelHandshake
+	ensureChannelMessageCache(cache, eventType)
+	info.Order = pp.localhostPathEnd2Order(key, info.Order)
+	cache[eventType][key] = info
+}
+
+func ensureChannelMessageCache(cache ChannelMessagesCache, eventType string) {
+	if _, ok := cache[eventType]; !ok {
+		cache[eventType] = make(ChannelMessageCache)
+	}
+}
+
+func (pp *PathProcessor) localhostPathEnd1Order(key ChannelKey, order chantypes.Order) chantypes.Order {
+	if cached, ok := pp.pathEnd1.channelOrderCache[key.ChannelID]; ok {
+		order = cached
+	}
+	if cached, ok := pp.pathEnd2.channelOrderCache[key.CounterpartyChannelID]; ok {
+		order = cached
+	}
+	// TODO this is insanely hacky, need to figure out how to handle the ordering dilemma on ordered chans
+	if order == chantypes.NONE {
+		return chantypes.ORDERED
+	}
+	return order
+}
+
+func (pp *PathProcessor) localhostPathEnd2Order(key ChannelKey, order chantypes.Order) chantypes.Order {
+	if cached, ok := pp.pathEnd2.channelOrderCache[key.ChannelID]; ok {
+		order = cached
+	}
+	if cached, ok := pp.pathEnd1.channelOrderCache[key.CounterpartyChannelID]; ok {
+		order = cached
+	}
+	return order
+}
+
+func splitLocalhostChannelStates(states ChannelStateCache) (ChannelStateCache, ChannelStateCache) {
+	pathEnd1States := make(ChannelStateCache)
+	pathEnd2States := make(ChannelStateCache)
+
+	for k, v := range states {
+		splitLocalhostChannelState(k, v, pathEnd1States, pathEnd2States)
+	}
+	return pathEnd1States, pathEnd2States
+}
+
+func splitLocalhostChannelState(
+	key ChannelKey,
+	state ChannelState,
+	pathEnd1States, pathEnd2States ChannelStateCache,
+) {
+	chan1, err := chantypes.ParseChannelSequence(key.ChannelID)
+	chan2, secErr := chantypes.ParseChannelSequence(key.CounterpartyChannelID)
+	if err != nil && secErr != nil {
+		return
+	}
+	// A missing counterparty ID means the handshake has not progressed past TRY.
+	if secErr != nil && err == nil {
+		pathEnd1States[key] = state
+		return
+	}
+	// Lower channel IDs belong to pathEnd1; higher IDs belong to pathEnd2.
+	if chan1 > chan2 {
+		pathEnd2States[key] = state
+		return
+	}
+	pathEnd1States[key] = state
 }
