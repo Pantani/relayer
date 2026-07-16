@@ -412,85 +412,120 @@ func (res *PacketInfo) ParseAttrs(log *zap.Logger, attrs []sdk.Attribute) {
 }
 
 func (res *PacketInfo) parsePacketAttribute(log *zap.Logger, attr sdk.Attribute) {
-	var err error
 	switch attr.Key {
 	case chantypes.AttributeKeySequence:
-		res.Sequence, err = strconv.ParseUint(attr.Value, 10, 64)
-		if err != nil {
-			log.Error("Error parsing packet sequence",
-				zap.String("value", attr.Value),
-				zap.Error(err),
-			)
-			return
-		}
+		res.parsePacketSequence(log, attr.Value)
 	case chantypes.AttributeKeyTimeoutTimestamp:
-		res.TimeoutTimestamp, err = strconv.ParseUint(attr.Value, 10, 64)
-		if err != nil {
-			log.Error("Error parsing packet timestamp",
-				zap.Uint64("sequence", res.Sequence),
-				zap.String("value", attr.Value),
-				zap.Error(err),
-			)
-			return
-		}
-	// NOTE: deprecated per IBC spec
-	case legacyAttributeKeyPacketData:
-		res.Data = []byte(attr.Value)
-	case chantypes.AttributeKeyDataHex:
-		data, err := hex.DecodeString(attr.Value)
-		if err != nil {
-			log.Error("Error parsing packet data",
-				zap.Uint64("sequence", res.Sequence),
-				zap.Error(err),
-			)
-			return
-		}
-		res.Data = data
-	// NOTE: deprecated per IBC spec
-	case legacyAttributeKeyPacketAck:
-		res.Ack = []byte(attr.Value)
-	case chantypes.AttributeKeyAckHex:
-		data, err := hex.DecodeString(attr.Value)
-		if err != nil {
-			log.Error("Error parsing packet ack",
-				zap.Uint64("sequence", res.Sequence),
-				zap.String("value", attr.Value),
-				zap.Error(err),
-			)
-			return
-		}
-		res.Ack = data
+		res.parsePacketTimeoutTimestamp(log, attr.Value)
+	case legacyAttributeKeyPacketData, chantypes.AttributeKeyDataHex:
+		res.parsePacketData(log, attr)
+	case legacyAttributeKeyPacketAck, chantypes.AttributeKeyAckHex:
+		res.parsePacketAcknowledgement(log, attr)
 	case chantypes.AttributeKeyTimeoutHeight:
-		timeoutSplit := strings.Split(attr.Value, "-")
-		if len(timeoutSplit) != 2 {
-			log.Error("Error parsing packet height timeout",
-				zap.Uint64("sequence", res.Sequence),
-				zap.String("value", attr.Value),
-			)
-			return
-		}
-		revisionNumber, err := strconv.ParseUint(timeoutSplit[0], 10, 64)
-		if err != nil {
-			log.Error("Error parsing packet timeout height revision number",
-				zap.Uint64("sequence", res.Sequence),
-				zap.String("value", timeoutSplit[0]),
-				zap.Error(err),
-			)
-			return
-		}
-		revisionHeight, err := strconv.ParseUint(timeoutSplit[1], 10, 64)
-		if err != nil {
-			log.Error("Error parsing packet timeout height revision height",
-				zap.Uint64("sequence", res.Sequence),
-				zap.String("value", timeoutSplit[1]),
-				zap.Error(err),
-			)
-			return
-		}
-		res.TimeoutHeight = clienttypes.Height{
-			RevisionNumber: revisionNumber,
-			RevisionHeight: revisionHeight,
-		}
+		res.parsePacketTimeoutHeight(log, attr.Value)
+	default:
+		res.parsePacketRoutingAttribute(attr)
+	}
+}
+
+func (res *PacketInfo) parsePacketSequence(log *zap.Logger, value string) {
+	var err error
+	res.Sequence, err = strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		log.Error("Error parsing packet sequence",
+			zap.String("value", value),
+			zap.Error(err),
+		)
+	}
+}
+
+func (res *PacketInfo) parsePacketTimeoutTimestamp(log *zap.Logger, value string) {
+	var err error
+	res.TimeoutTimestamp, err = strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		log.Error("Error parsing packet timestamp",
+			zap.Uint64("sequence", res.Sequence),
+			zap.String("value", value),
+			zap.Error(err),
+		)
+	}
+}
+
+func (res *PacketInfo) parsePacketData(log *zap.Logger, attr sdk.Attribute) {
+	// NOTE: deprecated per IBC spec
+	if attr.Key == legacyAttributeKeyPacketData {
+		res.Data = []byte(attr.Value)
+		return
+	}
+
+	data, err := hex.DecodeString(attr.Value)
+	if err != nil {
+		log.Error("Error parsing packet data",
+			zap.Uint64("sequence", res.Sequence),
+			zap.Error(err),
+		)
+		return
+	}
+	res.Data = data
+}
+
+func (res *PacketInfo) parsePacketAcknowledgement(log *zap.Logger, attr sdk.Attribute) {
+	// NOTE: deprecated per IBC spec
+	if attr.Key == legacyAttributeKeyPacketAck {
+		res.Ack = []byte(attr.Value)
+		return
+	}
+
+	data, err := hex.DecodeString(attr.Value)
+	if err != nil {
+		log.Error("Error parsing packet ack",
+			zap.Uint64("sequence", res.Sequence),
+			zap.String("value", attr.Value),
+			zap.Error(err),
+		)
+		return
+	}
+	res.Ack = data
+}
+
+func (res *PacketInfo) parsePacketTimeoutHeight(log *zap.Logger, value string) {
+	timeoutSplit := strings.Split(value, "-")
+	if len(timeoutSplit) != 2 {
+		log.Error("Error parsing packet height timeout",
+			zap.Uint64("sequence", res.Sequence),
+			zap.String("value", value),
+		)
+		return
+	}
+
+	revisionNumber, err := strconv.ParseUint(timeoutSplit[0], 10, 64)
+	if err != nil {
+		log.Error("Error parsing packet timeout height revision number",
+			zap.Uint64("sequence", res.Sequence),
+			zap.String("value", timeoutSplit[0]),
+			zap.Error(err),
+		)
+		return
+	}
+
+	revisionHeight, err := strconv.ParseUint(timeoutSplit[1], 10, 64)
+	if err != nil {
+		log.Error("Error parsing packet timeout height revision height",
+			zap.Uint64("sequence", res.Sequence),
+			zap.String("value", timeoutSplit[1]),
+			zap.Error(err),
+		)
+		return
+	}
+
+	res.TimeoutHeight = clienttypes.Height{
+		RevisionNumber: revisionNumber,
+		RevisionHeight: revisionHeight,
+	}
+}
+
+func (res *PacketInfo) parsePacketRoutingAttribute(attr sdk.Attribute) {
+	switch attr.Key {
 	case chantypes.AttributeKeySrcPort:
 		res.SourcePort = attr.Value
 	case chantypes.AttributeKeySrcChannel:
