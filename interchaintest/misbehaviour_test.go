@@ -172,8 +172,20 @@ func TestRelayerMisbehaviourDetection(t *testing.T) {
 	valSet := comettypes.NewValidatorSet([]*comettypes.Validator{val})
 	signers := []comettypes.PrivValidator{privVal}
 
-	// create a duplicate header
-	newHeader := createTMClientHeader(
+	// Submit a valid header at the target height first so the conflicting
+	// update below deterministically exercises duplicate-height misbehaviour.
+	baselineHeader := createTMClientHeader(
+		t,
+		chainB.Config().ChainID,
+		int64(newHeight.RevisionHeight),
+		height,
+		header.GetTime(),
+		valSet,
+		valSet,
+		signers,
+		header,
+	)
+	conflictingHeader := createTMClientHeader(
 		t,
 		chainB.Config().ChainID,
 		int64(newHeight.RevisionHeight),
@@ -185,25 +197,10 @@ func TestRelayerMisbehaviourDetection(t *testing.T) {
 		header,
 	)
 
-	// attempt to update client with duplicate header
+	// Update the client, then submit a different valid header at the same height.
 	b := cosmos.NewBroadcaster(t, chainA)
-
-	m, ok := newHeader.(proto.Message)
-	require.True(t, ok)
-
-	protoAny, err := codectypes.NewAnyWithValue(m)
-	require.NoError(t, err)
-
-	msg := &clienttypes.MsgUpdateClient{
-		ClientId:      clientID,
-		ClientMessage: protoAny,
-		Signer:        user.FormattedAddress(),
-	}
-	logger.Info("Misbehaviour test, MsgUpdateClient", zap.String("Signer", user.FormattedAddress()))
-
-	resp, err := cosmos.BroadcastTx(ctx, b, user, msg)
-	require.NoError(t, err)
-	assertTransactionIsValid(t, resp)
+	broadcastClientUpdate(t, ctx, logger, b, user, clientID, baselineHeader)
+	broadcastClientUpdate(t, ctx, logger, b, user, clientID, conflictingHeader)
 
 	// wait for inclusion in a block
 	err = testutil.WaitForBlocks(ctx, 5, chainA)
@@ -224,6 +221,35 @@ func TestRelayerMisbehaviourDetection(t *testing.T) {
 	tmClientState, ok := newClientState.(*ibccomettypes.ClientState)
 	require.True(t, ok)
 	require.NotEqual(t, uint64(0), tmClientState.FrozenHeight.RevisionHeight)
+}
+
+func broadcastClientUpdate(
+	t *testing.T,
+	ctx context.Context,
+	logger *zap.Logger,
+	broadcaster *cosmos.Broadcaster,
+	user cosmos.User,
+	clientID string,
+	clientMessage exported.ClientMessage,
+) {
+	t.Helper()
+
+	message, ok := clientMessage.(proto.Message)
+	require.True(t, ok)
+
+	protoAny, err := codectypes.NewAnyWithValue(message)
+	require.NoError(t, err)
+
+	msg := &clienttypes.MsgUpdateClient{
+		ClientId:      clientID,
+		ClientMessage: protoAny,
+		Signer:        user.FormattedAddress(),
+	}
+	logger.Info("Misbehaviour test, MsgUpdateClient", zap.String("Signer", user.FormattedAddress()))
+
+	resp, err := cosmos.BroadcastTx(ctx, broadcaster, user, msg)
+	require.NoError(t, err)
+	assertTransactionIsValid(t, resp)
 }
 
 func assertTransactionIsValid(t *testing.T, resp sdk.TxResponse) {
