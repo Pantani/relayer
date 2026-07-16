@@ -7,6 +7,7 @@ import (
 	"github.com/cosmos/relayer/v2/relayer/provider"
 
 	ckeys "github.com/cosmos/cosmos-sdk/client/keys"
+	"github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -90,43 +91,16 @@ func (cc *CosmosProvider) RestoreKey(name, mnemonic string, coinType uint32, sig
 // KeyAddOrRestore either generates a new mnemonic or uses the specified mnemonic and converts it to a private key
 // and BIP-39 HD Path which is then persisted to the keystore. It fails if there is an existing key with the same address.
 func (cc *CosmosProvider) KeyAddOrRestore(keyName string, coinType uint32, signingAlgorithm string, mnemonic ...string) (*provider.KeyOutput, error) {
-	var mnemonicStr string
-	var err error
-
-	var algo keyring.SignatureAlgo
-	switch signingAlgorithm {
-	case string(sr25519.Sr25519.Name()):
-		algo = sr25519.Sr25519
-	default:
-		algo = hd.Secp256k1
+	mnemonicStr, err := keyMnemonic(mnemonic)
+	if err != nil {
+		return nil, err
 	}
-
-	if len(mnemonic) > 0 {
-		mnemonicStr = mnemonic[0]
-	} else {
-		mnemonicStr, err = CreateMnemonic()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if coinType == ethereumCoinType {
-		algo = keyring.SignatureAlgo(ethermint.EthSecp256k1)
-		for _, codec := range cc.PCfg.ExtraCodecs {
-			if codec == "injective" {
-				algo = keyring.SignatureAlgo(injective.EthSecp256k1)
-			}
-		}
-	}
-
-	done := SetSDKConfigContext(cc.PCfg.AccountPrefix)
+	algo := cc.keyringAlgorithm(signingAlgorithm, coinType)
 
 	info, err := cc.Keybase.NewAccount(keyName, mnemonicStr, "", hd.CreateHDPath(coinType, 0, 0).String(), algo)
 	if err != nil {
 		return nil, err
 	}
-
-	done()
 
 	acc, err := info.GetAddress()
 	if err != nil {
@@ -138,6 +112,28 @@ func (cc *CosmosProvider) KeyAddOrRestore(keyName string, coinType uint32, signi
 		return nil, err
 	}
 	return &provider.KeyOutput{Mnemonic: mnemonicStr, Address: out}, nil
+}
+
+func keyMnemonic(mnemonic []string) (string, error) {
+	if len(mnemonic) > 0 {
+		return mnemonic[0], nil
+	}
+	return CreateMnemonic()
+}
+
+func (cc *CosmosProvider) keyringAlgorithm(signingAlgorithm string, coinType uint32) keyring.SignatureAlgo {
+	if coinType == ethereumCoinType {
+		for _, extraCodec := range cc.PCfg.ExtraCodecs {
+			if extraCodec == "injective" {
+				return injective.EthSecp256k1
+			}
+		}
+		return ethermint.EthSecp256k1
+	}
+	if signingAlgorithm == string(sr25519.Sr25519.Name()) {
+		return sr25519.Sr25519
+	}
+	return hd.Secp256k1
 }
 
 // ShowAddress retrieves a key by name from the keystore and returns the bech32 encoded string representation of that key.
@@ -226,11 +222,12 @@ func CreateMnemonic() (string, error) {
 // It returns an empty string if the byte slice is 0-length.
 // It returns an error if the bech32 conversion fails or the prefix is empty.
 func (cc *CosmosProvider) EncodeBech32AccAddr(addr sdk.AccAddress) (string, error) {
-	return sdk.Bech32ifyAddressBytes(cc.PCfg.AccountPrefix, addr)
+	return address.NewBech32Codec(cc.PCfg.AccountPrefix).BytesToString(addr)
 }
 
 func (cc *CosmosProvider) DecodeBech32AccAddr(addr string) (sdk.AccAddress, error) {
-	return sdk.GetFromBech32(addr, cc.PCfg.AccountPrefix)
+	decoded, err := address.NewBech32Codec(cc.PCfg.AccountPrefix).StringToBytes(addr)
+	return sdk.AccAddress(decoded), err
 }
 
 func (cc *CosmosProvider) GetKeyAddressForKey(key string) (sdk.AccAddress, error) {
@@ -252,9 +249,6 @@ func (cc *CosmosProvider) KeyFromKeyOrAddress(keyOrAddress string) (string, erro
 		if err != nil {
 			return "", err
 		}
-
-		done := SetSDKConfigContext(cc.PCfg.AccountPrefix)
-		defer done()
 
 		kr, err := cc.Keybase.KeyByAddress(acc)
 		if err != nil {
