@@ -409,67 +409,70 @@ func TestCliPathsCharacterizesFetchSelectionNetworkAndOverwrite(t *testing.T) {
 }
 
 func TestCliPathsCharacterizesFetchBatchContinuationAndFatalPartialState(t *testing.T) {
-	t.Run("retrieval failures continue and stderr follows request order", func(t *testing.T) {
-		state := characterizedPathsDiskState(t, "a", "b", "c")
-		var downloaded []string
-		directoryCalls := 0
-		withCharacterizedChainsTransport(t, func(req *http.Request) (*http.Response, error) {
-			if req.URL.Host == "api.github.com" {
-				directoryCalls++
-				if directoryCalls == 1 {
-					return characterizedGithubDirectoryResponse(req), nil
-				}
-				return characterizedGithubDirectoryResponse(req, "a-b", "a-c", "b-c"), nil
+	t.Run("retrieval failures continue and stderr follows request order", characterizeFetchRetrievalFailureContinuation)
+	t.Run("fatal unmarshal stops batch after preserving memory-only prior addition", characterizeFetchFatalPartialState)
+}
+
+func characterizeFetchRetrievalFailureContinuation(t *testing.T) {
+	state := characterizedPathsDiskState(t, "a", "b", "c")
+	var downloaded []string
+	directoryCalls := 0
+	withCharacterizedChainsTransport(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "api.github.com" {
+			directoryCalls++
+			if directoryCalls == 1 {
+				return characterizedGithubDirectoryResponse(req), nil
 			}
-			pair := characterizedPairFromContentsPath(req.URL.Path)
-			downloaded = append(downloaded, pair)
-			left, right := pair[0:1], pair[2:3]
-			return characterizedGithubDownloadResponse(req, characterizedIBCData(left, right)), nil
-		})
-
-		stdout, stderr, err := executeCharacterizedChainsCommand(t, pathsFetchCmd(state))
-
-		require.NoError(t, err)
-		require.Empty(t, stdout)
-		require.Equal(t, 3, directoryCalls)
-		require.Len(t, downloaded, 2)
-		lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
-		require.Len(t, lines, 3)
-		require.Contains(t, lines[0], "failure retrieving: ")
-		require.Contains(t, lines[0], ": consider adding to cosmos/chain-registry: ERR:")
-		require.Equal(t, "added:  "+downloaded[0], lines[1])
-		require.Equal(t, "added:  "+downloaded[1], lines[2])
-		failedPair := strings.Split(strings.TrimPrefix(lines[0], "failure retrieving: "), ":")[0]
-		require.NotContains(t, state.config.Paths, failedPair)
-		require.Contains(t, state.config.Paths, downloaded[0])
-		require.Contains(t, state.config.Paths, downloaded[1])
+			return characterizedGithubDirectoryResponse(req, "a-b", "a-c", "b-c"), nil
+		}
+		pair := characterizedPairFromContentsPath(req.URL.Path)
+		downloaded = append(downloaded, pair)
+		left, right := pair[0:1], pair[2:3]
+		return characterizedGithubDownloadResponse(req, characterizedIBCData(left, right)), nil
 	})
 
-	t.Run("fatal unmarshal stops batch after preserving memory-only prior addition", func(t *testing.T) {
-		state := characterizedPathsDiskState(t, "a", "b", "c")
-		var downloaded []string
-		withCharacterizedChainsTransport(t, func(req *http.Request) (*http.Response, error) {
-			if req.URL.Host == "api.github.com" {
-				return characterizedGithubDirectoryResponse(req, "a-b", "a-c", "b-c"), nil
-			}
-			pair := characterizedPairFromContentsPath(req.URL.Path)
-			downloaded = append(downloaded, pair)
-			if len(downloaded) == 2 {
-				return characterizedGithubDownloadResponse(req, "not-json"), nil
-			}
-			left, right := pair[0:1], pair[2:3]
-			return characterizedGithubDownloadResponse(req, characterizedIBCData(left, right)), nil
-		})
+	stdout, stderr, err := executeCharacterizedChainsCommand(t, pathsFetchCmd(state))
 
-		stdout, stderr, err := executeCharacterizedChainsCommand(t, pathsFetchCmd(state))
+	require.NoError(t, err)
+	require.Empty(t, stdout)
+	require.Equal(t, 3, directoryCalls)
+	require.Len(t, downloaded, 2)
+	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	require.Len(t, lines, 3)
+	require.Contains(t, lines[0], "failure retrieving: ")
+	require.Contains(t, lines[0], ": consider adding to cosmos/chain-registry: ERR:")
+	require.Equal(t, "added:  "+downloaded[0], lines[1])
+	require.Equal(t, "added:  "+downloaded[1], lines[2])
+	failedPair := strings.Split(strings.TrimPrefix(lines[0], "failure retrieving: "), ":")[0]
+	require.NotContains(t, state.config.Paths, failedPair)
+	require.Contains(t, state.config.Paths, downloaded[0])
+	require.Contains(t, state.config.Paths, downloaded[1])
+}
 
-		require.ErrorContains(t, err, "failed to unmarshal")
-		require.Empty(t, stdout)
-		require.Len(t, downloaded, 2)
-		require.Equal(t, "added:  "+downloaded[0]+"\n", stderr)
-		require.Contains(t, state.config.Paths, downloaded[0])
-		require.Empty(t, readCharacterizedDiskConfig(t, state.homePath).Paths)
+func characterizeFetchFatalPartialState(t *testing.T) {
+	state := characterizedPathsDiskState(t, "a", "b", "c")
+	var downloaded []string
+	withCharacterizedChainsTransport(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "api.github.com" {
+			return characterizedGithubDirectoryResponse(req, "a-b", "a-c", "b-c"), nil
+		}
+		pair := characterizedPairFromContentsPath(req.URL.Path)
+		downloaded = append(downloaded, pair)
+		if len(downloaded) == 2 {
+			return characterizedGithubDownloadResponse(req, "not-json"), nil
+		}
+		left, right := pair[0:1], pair[2:3]
+		return characterizedGithubDownloadResponse(req, characterizedIBCData(left, right)), nil
 	})
+
+	stdout, stderr, err := executeCharacterizedChainsCommand(t, pathsFetchCmd(state))
+
+	require.ErrorContains(t, err, "failed to unmarshal")
+	require.Empty(t, stdout)
+	require.Len(t, downloaded, 2)
+	require.Equal(t, "added:  "+downloaded[0]+"\n", stderr)
+	require.Contains(t, state.config.Paths, downloaded[0])
+	require.Empty(t, readCharacterizedDiskConfig(t, state.homePath).Paths)
 }
 
 func characterizedPathsStatusState() *appState {
