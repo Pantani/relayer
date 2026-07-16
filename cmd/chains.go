@@ -140,41 +140,40 @@ $ %s chains show ibc-0 --yaml
 $ %s ch s ibc-0 --json
 $ %s ch s ibc-0 --yaml`, appName, appName, appName, appName)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, ok := a.config.Chains[args[0]]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-			jsn, err := cmd.Flags().GetBool(flagJSON)
-			if err != nil {
-				return err
-			}
-			switch {
-			case jsn:
-				pcfgw := &ProviderConfigWrapper{
-					Type:  c.ChainProvider.Type(),
-					Value: c.ChainProvider.ProviderConfig(),
-				}
-				out, err := json.Marshal(pcfgw)
-				if err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(out))
-				return nil
-			default:
-				pcfgw := &ProviderConfigWrapper{
-					Type:  c.ChainProvider.Type(),
-					Value: c.ChainProvider.ProviderConfig(),
-				}
-				out, err := yaml.Marshal(pcfgw)
-				if err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(out))
-				return nil
-			}
+			return runChainsShow(cmd, a, args[0])
 		},
 	}
 	return jsonFlag(a.viper, cmd)
+}
+
+func runChainsShow(cmd *cobra.Command, a *appState, chainName string) error {
+	c, ok := a.config.Chains[chainName]
+	if !ok {
+		return errChainNotFound(chainName)
+	}
+
+	jsn, err := cmd.Flags().GetBool(flagJSON)
+	if err != nil {
+		return err
+	}
+
+	pcfgw := &ProviderConfigWrapper{
+		Type:  c.ChainProvider.Type(),
+		Value: c.ChainProvider.ProviderConfig(),
+	}
+	out, err := marshalProviderConfig(pcfgw, jsn)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), string(out))
+	return nil
+}
+
+func marshalProviderConfig(config *ProviderConfigWrapper, jsonOutput bool) ([]byte, error) {
+	if jsonOutput {
+		return json.Marshal(config)
+	}
+	return yaml.Marshal(config)
 }
 
 func chainsDeleteCmd(a *appState) *cobra.Command {
@@ -221,47 +220,55 @@ func chainsRegistryList(a *appState) *cobra.Command {
 		Aliases: []string{"rl"},
 		Short:   "List chains available for configuration from the registry",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			jsn, err := cmd.Flags().GetBool(flagJSON)
-			if err != nil {
-				return err
-			}
-
-			yml, err := cmd.Flags().GetBool(flagYAML)
-			if err != nil {
-				return err
-			}
-
-			chains, err := cregistry.DefaultChainRegistry(a.log).ListChains(cmd.Context())
-			if err != nil {
-				return err
-			}
-
-			switch {
-			case yml && jsn:
-				return errors.New("can't pass both --json and --yaml, must pick one")
-			case yml:
-				out, err := yaml.Marshal(chains)
-				if err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(out))
-				return nil
-			case jsn:
-				out, err := json.Marshal(chains)
-				if err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(out))
-				return nil
-			default:
-				for _, chain := range chains {
-					fmt.Fprintln(cmd.OutOrStdout(), chain)
-				}
-			}
-			return nil
+			return runChainsRegistryList(cmd, a)
 		},
 	}
 	return yamlFlag(a.viper, jsonFlag(a.viper, cmd))
+}
+
+func runChainsRegistryList(cmd *cobra.Command, a *appState) error {
+	jsn, err := cmd.Flags().GetBool(flagJSON)
+	if err != nil {
+		return err
+	}
+
+	yml, err := cmd.Flags().GetBool(flagYAML)
+	if err != nil {
+		return err
+	}
+
+	chains, err := cregistry.DefaultChainRegistry(a.log).ListChains(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	return writeRegistryChains(cmd, chains, jsn, yml)
+}
+
+func writeRegistryChains(cmd *cobra.Command, chains []string, jsn, yml bool) error {
+	switch {
+	case yml && jsn:
+		return errors.New("can't pass both --json and --yaml, must pick one")
+	case yml:
+		out, err := yaml.Marshal(chains)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		return nil
+	case jsn:
+		out, err := json.Marshal(chains)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		return nil
+	default:
+		for _, chain := range chains {
+			fmt.Fprintln(cmd.OutOrStdout(), chain)
+		}
+	}
+	return nil
 }
 
 func chainsListCmd(a *appState) *cobra.Command {
@@ -274,69 +281,85 @@ func chainsListCmd(a *appState) *cobra.Command {
 $ %s chains list
 $ %s ch l`, appName, appName)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			jsn, err := cmd.Flags().GetBool(flagJSON)
-			if err != nil {
-				return err
-			}
-
-			yml, err := cmd.Flags().GetBool(flagYAML)
-			if err != nil {
-				return err
-			}
-
-			configs := a.config.Wrapped().ProviderConfigs
-			if len(configs) == 0 {
-				fmt.Fprintln(cmd.ErrOrStderr(), "warning: no chains found (do you need to run 'rly chains add'?)")
-			}
-
-			switch {
-			case yml && jsn:
-				return errors.New("can't pass both --json and --yaml, must pick one")
-			case yml:
-				out, err := yaml.Marshal(configs)
-				if err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(out))
-				return nil
-			case jsn:
-				out, err := json.Marshal(configs)
-				if err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(out))
-				return nil
-			default:
-				i := 0
-				for _, c := range a.config.Chains {
-					var (
-						key = xIcon
-						p   = xIcon
-						bal = xIcon
-					)
-					// check that the key from config.yaml is set in keychain
-					if c.ChainProvider.KeyExists(c.ChainProvider.Key()) {
-						key = check
-					}
-
-					coins, err := c.ChainProvider.QueryBalance(cmd.Context(), c.ChainProvider.Key())
-					if err == nil && !coins.Empty() {
-						bal = check
-					}
-
-					for _, pth := range a.config.Paths {
-						if pth.Src.ChainID == c.ChainProvider.ChainId() || pth.Dst.ChainID == c.ChainID() {
-							p = check
-						}
-					}
-					i++
-					fmt.Fprintf(cmd.OutOrStdout(), "%2d: %-20s -> type(%s) key(%s) bal(%s) path(%s)\n", i, c.ChainID(), c.ChainProvider.Type(), key, bal, p)
-				}
-				return nil
-			}
+			return runChainsList(cmd, a)
 		},
 	}
 	return yamlFlag(a.viper, jsonFlag(a.viper, cmd))
+}
+
+func runChainsList(cmd *cobra.Command, a *appState) error {
+	jsn, err := cmd.Flags().GetBool(flagJSON)
+	if err != nil {
+		return err
+	}
+
+	yml, err := cmd.Flags().GetBool(flagYAML)
+	if err != nil {
+		return err
+	}
+
+	configs := a.config.Wrapped().ProviderConfigs
+	if len(configs) == 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: no chains found (do you need to run 'rly chains add'?)")
+	}
+
+	return writeChainConfigs(cmd, a, configs, jsn, yml)
+}
+
+func writeChainConfigs(cmd *cobra.Command, a *appState, configs ProviderConfigs, jsn, yml bool) error {
+	switch {
+	case yml && jsn:
+		return errors.New("can't pass both --json and --yaml, must pick one")
+	case yml:
+		out, err := yaml.Marshal(configs)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		return nil
+	case jsn:
+		out, err := json.Marshal(configs)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		return nil
+	default:
+		writePlainChainList(cmd, a)
+		return nil
+	}
+}
+
+func writePlainChainList(cmd *cobra.Command, a *appState) {
+	i := 0
+	for _, c := range a.config.Chains {
+		key, bal, path := chainListStatus(cmd, a, c)
+		i++
+		fmt.Fprintf(cmd.OutOrStdout(), "%2d: %-20s -> type(%s) key(%s) bal(%s) path(%s)\n", i, c.ChainID(), c.ChainProvider.Type(), key, bal, path)
+	}
+}
+
+func chainListStatus(cmd *cobra.Command, a *appState, c *relayer.Chain) (key, bal, path string) {
+	key = xIcon
+	bal = xIcon
+	path = xIcon
+
+	// check that the key from config.yaml is set in keychain
+	if c.ChainProvider.KeyExists(c.ChainProvider.Key()) {
+		key = check
+	}
+
+	coins, err := c.ChainProvider.QueryBalance(cmd.Context(), c.ChainProvider.Key())
+	if err == nil && !coins.Empty() {
+		bal = check
+	}
+
+	for _, pth := range a.config.Paths {
+		if pth.Src.ChainID == c.ChainProvider.ChainId() || pth.Dst.ChainID == c.ChainID() {
+			path = check
+		}
+	}
+	return key, bal, path
 }
 
 func chainsAddCmd(a *appState) *cobra.Command {
@@ -352,50 +375,63 @@ func chainsAddCmd(a *appState) *cobra.Command {
  $ %s chains add --file chains/ibc0.json ibc0
  $ %s chains add --url https://relayer.com/ibc0.json ibc0`, appName, appName, appName, appName, appName),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			file, url, forceAdd, testnet, err := getAddInputs(cmd)
-			if err != nil {
-				return err
-			}
-
-			if ok := a.config; ok == nil {
-				return errors.New("config not initialized, consider running `rly config init`")
-			}
-
-			return a.performConfigLockingOperation(cmd.Context(), func() error {
-				// default behavior fetch from chain registry
-				// still allow for adding config from url or file
-				switch {
-				case file != "":
-					var chainName string
-					switch len(args) {
-					case 0:
-						chainName = strings.Split(filepath.Base(file), ".")[0]
-					case 1:
-						chainName = args[0]
-					default:
-						return errors.New("one chain name is required")
-					}
-					if err := addChainFromFile(a, chainName, file); err != nil {
-						return err
-					}
-				case url != "":
-					if len(args) != 1 {
-						return errors.New("one chain name is required")
-					}
-					if err := addChainFromURL(a, args[0], url); err != nil {
-						return err
-					}
-				default:
-					if err := addChainsFromRegistry(cmd.Context(), a, forceAdd, testnet, args); err != nil {
-						return err
-					}
-				}
-				return nil
-			})
+			return runChainsAdd(cmd, a, args)
 		},
 	}
 
 	return chainsAddFlags(a.viper, cmd)
+}
+
+func runChainsAdd(cmd *cobra.Command, a *appState, args []string) error {
+	file, rawURL, forceAdd, testnet, err := getAddInputs(cmd)
+	if err != nil {
+		return err
+	}
+
+	if ok := a.config; ok == nil {
+		return errors.New("config not initialized, consider running `rly config init`")
+	}
+
+	return a.performConfigLockingOperation(cmd.Context(), func() error {
+		return addChainFromInput(cmd, a, args, file, rawURL, forceAdd, testnet)
+	})
+}
+
+func addChainFromInput(
+	cmd *cobra.Command,
+	a *appState,
+	args []string,
+	file, rawURL string,
+	forceAdd, testnet bool,
+) error {
+	// Default behavior fetches from the chain registry while still allowing a
+	// config to be added from a URL or file.
+	switch {
+	case file != "":
+		chainName, err := chainNameFromFile(args, file)
+		if err != nil {
+			return err
+		}
+		return addChainFromFile(a, chainName, file)
+	case rawURL != "":
+		if len(args) != 1 {
+			return errors.New("one chain name is required")
+		}
+		return addChainFromURL(a, args[0], rawURL)
+	default:
+		return addChainsFromRegistry(cmd.Context(), a, forceAdd, testnet, args)
+	}
+}
+
+func chainNameFromFile(args []string, file string) (string, error) {
+	switch len(args) {
+	case 0:
+		return strings.Split(filepath.Base(file), ".")[0], nil
+	case 1:
+		return args[0], nil
+	default:
+		return "", errors.New("one chain name is required")
+	}
 }
 
 func chainsAddDirCmd(a *appState) *cobra.Command {
@@ -497,70 +533,14 @@ func addChainsFromRegistry(ctx context.Context, a *appState, forceAdd, testnet b
 	var existed, failed, added []string
 
 	for _, chain := range chains {
-		if _, ok := a.config.Chains[chain]; ok {
-			a.log.Warn(
-				"Chain already exists",
-				zap.String("chain", chain),
-				zap.String("source_link", chainRegistry.SourceLink()),
-			)
+		switch addChainFromRegistry(ctx, a, chainRegistry, forceAdd, testnet, chain) {
+		case registryChainExisted:
 			existed = append(existed, chain)
-			continue
-		}
-
-		chainInfo, err := chainRegistry.GetChain(ctx, testnet, chain)
-		if err != nil {
-			a.log.Warn(
-				"Error retrieving chain",
-				zap.String("chain", chain),
-				zap.Error(err),
-			)
+		case registryChainFailed:
 			failed = append(failed, chain)
-			continue
+		case registryChainAdded:
+			added = append(added, chain)
 		}
-
-		chainConfig, err := chainInfo.GetChainConfig(ctx, forceAdd, testnet, chain)
-		if err != nil {
-			a.log.Warn(
-				"Error generating chain config",
-				zap.String("chain", chain),
-				zap.Error(err),
-			)
-			failed = append(failed, chain)
-			continue
-		}
-		chainConfig.ChainName = chainInfo.ChainName
-		chainConfig.Broadcast = provider.BroadcastModeBatch
-
-		// build the ChainProvider
-		prov, err := chainConfig.NewProvider(
-			a.log.With(zap.String("provider_type", "cosmos")),
-			a.homePath, a.debug, chainInfo.ChainName,
-		)
-		if err != nil {
-			a.log.Warn(
-				"Failed to build ChainProvider",
-				zap.String("chain_id", chainConfig.ChainID),
-				zap.Error(err),
-			)
-			failed = append(failed, chain)
-			continue
-		}
-
-		// add to config
-		c := relayer.NewChain(a.log, prov, a.debug)
-		if err = a.config.AddChain(c); err != nil {
-			a.log.Warn(
-				"Failed to add chain to config",
-				zap.String("chain", chain),
-				zap.Error(err),
-			)
-			failed = append(failed, chain)
-			continue
-		}
-
-		added = append(added, chain)
-		// found the correct chain so move on to next chain in chains
-
 	}
 	a.log.Info("Config update status",
 		zap.Any("added", added),
@@ -568,6 +548,80 @@ func addChainsFromRegistry(ctx context.Context, a *appState, forceAdd, testnet b
 		zap.Any("already existed", existed),
 	)
 	return nil
+}
+
+type registryChainResult uint8
+
+const (
+	registryChainExisted registryChainResult = iota
+	registryChainFailed
+	registryChainAdded
+)
+
+func addChainFromRegistry(
+	ctx context.Context,
+	a *appState,
+	chainRegistry cregistry.ChainRegistry,
+	forceAdd, testnet bool,
+	chain string,
+) registryChainResult {
+	if _, ok := a.config.Chains[chain]; ok {
+		a.log.Warn(
+			"Chain already exists",
+			zap.String("chain", chain),
+			zap.String("source_link", chainRegistry.SourceLink()),
+		)
+		return registryChainExisted
+	}
+
+	chainInfo, err := chainRegistry.GetChain(ctx, testnet, chain)
+	if err != nil {
+		a.log.Warn(
+			"Error retrieving chain",
+			zap.String("chain", chain),
+			zap.Error(err),
+		)
+		return registryChainFailed
+	}
+
+	chainConfig, err := chainInfo.GetChainConfig(ctx, forceAdd, testnet, chain)
+	if err != nil {
+		a.log.Warn(
+			"Error generating chain config",
+			zap.String("chain", chain),
+			zap.Error(err),
+		)
+		return registryChainFailed
+	}
+	chainConfig.ChainName = chainInfo.ChainName
+	chainConfig.Broadcast = provider.BroadcastModeBatch
+
+	// build the ChainProvider
+	prov, err := chainConfig.NewProvider(
+		a.log.With(zap.String("provider_type", "cosmos")),
+		a.homePath, a.debug, chainInfo.ChainName,
+	)
+	if err != nil {
+		a.log.Warn(
+			"Failed to build ChainProvider",
+			zap.String("chain_id", chainConfig.ChainID),
+			zap.Error(err),
+		)
+		return registryChainFailed
+	}
+
+	// add to config
+	c := relayer.NewChain(a.log, prov, a.debug)
+	if err = a.config.AddChain(c); err != nil {
+		a.log.Warn(
+			"Failed to add chain to config",
+			zap.String("chain", chain),
+			zap.Error(err),
+		)
+		return registryChainFailed
+	}
+
+	return registryChainAdded
 }
 
 func isValidURL(str string) bool {
