@@ -51,42 +51,56 @@ func (pcp *PenumbraChainProcessor) handlePacketMessage(action string, pi provide
 func (pcp *PenumbraChainProcessor) handleChannelMessage(eventType string, ci provider.ChannelInfo, ibcMessagesCache processor.IBCMessagesCache) {
 	pcp.channelConnections[ci.ChannelID] = ci.ConnID
 	channelKey := processor.ChannelInfoChannelKey(ci)
+	pcp.updateChannelState(eventType, ci, channelKey)
+	ibcMessagesCache.ChannelHandshake.Retain(channelKey, eventType, ci)
+	pcp.logChannelMessage(eventType, ci)
+}
 
+func (pcp *PenumbraChainProcessor) updateChannelState(
+	eventType string,
+	ci provider.ChannelInfo,
+	channelKey processor.ChannelKey,
+) {
 	if eventType == chantypes.EventTypeChannelOpenInit {
-		found := false
-		for k := range pcp.channelStateCache {
-			// Don't add a channelKey to the channelStateCache without counterparty channel ID
-			// since we already have the channelKey in the channelStateCache which includes the
-			// counterparty channel ID.
-			if k.MsgInitKey() == channelKey {
-				found = true
-				break
-			}
-		}
-		if !found {
-			pcp.channelStateCache.SetOpen(channelKey, false, ci.Order)
-		}
-	} else {
-		switch eventType {
-		case chantypes.EventTypeChannelOpenTry:
-			pcp.channelStateCache.SetOpen(channelKey, false, ci.Order)
-		case chantypes.EventTypeChannelOpenAck, chantypes.EventTypeChannelOpenConfirm:
-			pcp.channelStateCache.SetOpen(channelKey, true, ci.Order)
-		case chantypes.EventTypeChannelClosed, chantypes.EventTypeChannelCloseConfirm:
-			for k := range pcp.channelStateCache {
-				if k.PortID == ci.PortID && k.ChannelID == ci.ChannelID {
-					pcp.channelStateCache.SetOpen(channelKey, false, ci.Order)
-					break
-				}
-			}
-		}
-		// Clear out MsgInitKeys once we have the counterparty channel ID
-		delete(pcp.channelStateCache, channelKey.MsgInitKey())
+		pcp.retainChannelOpenInit(channelKey, ci)
+		return
 	}
 
-	ibcMessagesCache.ChannelHandshake.Retain(channelKey, eventType, ci)
+	switch eventType {
+	case chantypes.EventTypeChannelOpenTry:
+		pcp.channelStateCache.SetOpen(channelKey, false, ci.Order)
+	case chantypes.EventTypeChannelOpenAck, chantypes.EventTypeChannelOpenConfirm:
+		pcp.channelStateCache.SetOpen(channelKey, true, ci.Order)
+	case chantypes.EventTypeChannelClosed, chantypes.EventTypeChannelCloseConfirm:
+		pcp.closeChannelIfPresent(channelKey, ci)
+	}
+	// Clear out MsgInitKeys once we have the counterparty channel ID.
+	delete(pcp.channelStateCache, channelKey.MsgInitKey())
+}
 
-	pcp.logChannelMessage(eventType, ci)
+func (pcp *PenumbraChainProcessor) retainChannelOpenInit(
+	channelKey processor.ChannelKey,
+	ci provider.ChannelInfo,
+) {
+	for key := range pcp.channelStateCache {
+		// Don't add an init key when the full counterparty key is present.
+		if key.MsgInitKey() == channelKey {
+			return
+		}
+	}
+	pcp.channelStateCache.SetOpen(channelKey, false, ci.Order)
+}
+
+func (pcp *PenumbraChainProcessor) closeChannelIfPresent(
+	channelKey processor.ChannelKey,
+	ci provider.ChannelInfo,
+) {
+	for key := range pcp.channelStateCache {
+		if key.PortID == ci.PortID && key.ChannelID == ci.ChannelID {
+			pcp.channelStateCache.SetOpen(channelKey, false, ci.Order)
+			return
+		}
+	}
 }
 
 func (pcp *PenumbraChainProcessor) handleConnectionMessage(eventType string, ci provider.ConnectionInfo, ibcMessagesCache processor.IBCMessagesCache) {
