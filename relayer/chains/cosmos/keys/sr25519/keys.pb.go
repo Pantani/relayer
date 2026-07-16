@@ -7,7 +7,6 @@ package sr25519
 
 import (
 	fmt "fmt"
-	github_com_cometbft_cometbft_crypto_sr25519 "github.com/cometbft/cometbft/crypto/sr25519"
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	proto "github.com/cosmos/gogoproto/proto"
 	io "io"
@@ -28,7 +27,7 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
 // PubKey defines a sr25519 ECDSA public key.
 type PubKey struct {
-	Key github_com_cometbft_cometbft_crypto_sr25519.PubKey `protobuf:"bytes,1,opt,name=key,proto3,casttype=github.com/cometbft/cometbft/crypto/sr25519.PubKey" json:"key,omitempty"`
+	Key []byte `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 }
 
 func (m *PubKey) Reset()      { *m = PubKey{} }

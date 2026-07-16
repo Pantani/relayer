@@ -10,26 +10,34 @@ import (
 	"time"
 
 	sdkmath "cosmossdk.io/math"
-	"cosmossdk.io/x/feegrant"
 	"github.com/avast/retry-go/v4"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
+	"github.com/cosmos/cosmos-sdk/x/feegrant"
 	"github.com/cosmos/go-bip39"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	"github.com/cosmos/interchaintest/v11"
+	cosmosv8 "github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	"github.com/cosmos/relayer/v2/cclient"
 	"github.com/cosmos/relayer/v2/relayer"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos"
 	"github.com/cosmos/relayer/v2/relayer/processor"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	cosmosv8 "github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"golang.org/x/sync/errgroup"
+)
+
+const feegrantPath = "gaia-osmosis"
+
+const (
+	recvPacketMsgType      = "/ibc.core.channel.v1.MsgRecvPacket"
+	acknowledgementMsgType = "/ibc.core.channel.v1.MsgAcknowledgement"
 )
 
 // protoTxProvider is a type which can provide a proto transaction. It is a
@@ -41,6 +49,39 @@ type protoTxProvider interface {
 type chainFeegrantInfo struct {
 	granter  string
 	grantees []string
+}
+
+type feegrantWalletSet struct {
+	granter          ibc.Wallet
+	grantees         []ibc.Wallet
+	counterpartyUser ibc.Wallet
+	gaiaUser         ibc.Wallet
+}
+
+type feegrantTestScenario struct {
+	ctx              context.Context
+	relayer          ibc.Relayer
+	reporter         *testreporter.RelayerExecReporter
+	gaia             ibc.Chain
+	counterparty     ibc.Chain
+	gaiaChannel      ibc.ChannelOutput
+	counterpartyChan ibc.ChannelCounterparty
+	wallets          feegrantWalletSet
+	fundAmount       sdkmath.Int
+	granteeFund      sdkmath.Int
+	feegrantedChains map[string]*chainFeegrantInfo
+}
+
+type feegrantTransferResult struct {
+	amount           sdkmath.Int
+	gaiaDestination  string
+	counterpartyDest string
+}
+
+type restoreKeyRequest struct {
+	chain        ibc.Chain
+	wallet       ibc.Wallet
+	errorChainID string
 }
 
 func genMnemonic(t *testing.T) string {
@@ -64,478 +105,589 @@ func genMnemonic(t *testing.T) string {
 // Helpful to debug:
 // docker ps -a --format {{.Names}} then e.g. docker logs gaia-1-val-0-TestRelayerFeeGrant 2>&1 -f
 func TestRelayerFeeGrant(t *testing.T) {
-	ctx := context.Background()
-	logger := zaptest.NewLogger(t)
+	runFeegrantTestCases(t, zaptest.NewLogger(t), feegrantChainSpecs("v14.1.0"), false)
+}
 
+// TestRelayerFeeGrantExternal Feegrant on a single chain where the granter is an externally controlled address (no private key).
+// Run this test with e.g. go test -timeout 300s -run ^TestRelayerFeeGrantExternal$ github.com/cosmos/relayer/v2/ibctest.
+func TestRelayerFeeGrantExternal(t *testing.T) {
+	runFeegrantTestCases(t, zaptest.NewLogger(t), feegrantChainSpecs("v7.0.3"), true)
+}
+
+func feegrantChainSpecs(gaiaVersion string) [][]*interchaintest.ChainSpec {
 	nv := 1
 	nf := 0
 
-	//In order to have this image locally you'd need to build it with heighliner, e.g.,
-	//from within the local "gaia" directory, run the following command:
-	//../heighliner/heighliner build -c gaia --local -f ../heighliner/chains.yaml
-	// gaiaImage := ibc.DockerImage{
-	// 	Repository: "gaia",
-	// 	Version:    "local",
-	// 	UidGid:     "1025:1025", //the heighliner user string. this isn't exposed on ibctest
-	// }
-
-	// gaiaChainSpec := &interchaintest.ChainSpec{
-	// 	ChainName:     "gaia",
-	// 	NumValidators: &nv,
-	// 	NumFullNodes:  &nf,
-	// 	ChainConfig: ibc.ChainConfig{
-	// 		Type: "cosmos",
-	// 		Name: "gaia",
-	// 		//ChainID:        "gaia-1", //I believe this will be auto-generated?
-	// 		Images:         []ibc.DockerImage{gaiaImage},
-	// 		Bin:            "gaiad",
-	// 		Bech32Prefix:   "cosmos",
-	// 		Denom:          "uatom",
-	// 		GasPrices:      "0.01uatom",
-	// 		TrustingPeriod: "504h",
-	// 		GasAdjustment:  1.3,
-	// 	}}
-
-	var tests = [][]*interchaintest.ChainSpec{
+	return [][]*interchaintest.ChainSpec{
 		{
-			{Name: "gaia", ChainName: "gaia", Version: "v14.1.0", NumValidators: &nv, NumFullNodes: &nf},
+			{Name: "gaia", ChainName: "gaia", Version: gaiaVersion, NumValidators: &nv, NumFullNodes: &nf, ChainConfig: gaiaChainConfig(gaiaVersion, ibc.ChainConfig{})},
 			{Name: "osmosis", ChainName: "osmosis", Version: "v14.0.1", NumValidators: &nv, NumFullNodes: &nf},
 		},
 		{
-			{Name: "gaia", ChainName: "gaia", Version: "v14.1.0", NumValidators: &nv, NumFullNodes: &nf},
+			{Name: "gaia", ChainName: "gaia", Version: gaiaVersion, NumValidators: &nv, NumFullNodes: &nf, ChainConfig: gaiaChainConfig(gaiaVersion, ibc.ChainConfig{})},
 			{Name: "kujira", ChainName: "kujira", Version: "v0.8.7", NumValidators: &nv, NumFullNodes: &nf},
 		},
 	}
-
-	for _, tt := range tests {
-		testname := fmt.Sprintf("%s,%s", tt[0].Name, tt[1].Name)
-		t.Run(testname, func(t *testing.T) {
-
-			// Chain Factory
-			cf := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), tt)
-
-			chains, err := cf.Chains(t.Name())
-			require.NoError(t, err)
-			gaia, osmosis := chains[0], chains[1]
-
-			// Relayer Factory to construct relayer
-			r := NewRelayerFactory(RelayerConfig{
-				Processor:           relayer.ProcessorEvents,
-				InitialBlockHistory: 100,
-			}).Build(t, nil, "")
-
-			processor.PathProcMessageCollector = make(chan *processor.PathProcessorMessageResp, 10000)
-
-			// Prep Interchain
-			const ibcPath = "gaia-osmosis"
-			ic := interchaintest.NewInterchain().
-				AddChain(gaia).
-				AddChain(osmosis).
-				AddRelayer(r, "relayer").
-				AddLink(interchaintest.InterchainLink{
-					Chain1:  gaia,
-					Chain2:  osmosis,
-					Relayer: r,
-					Path:    ibcPath,
-				})
-
-			// Reporter/logs
-			rep := testreporter.NewNopReporter()
-			eRep := rep.RelayerExecReporter(t)
-
-			client, network := interchaintest.DockerSetup(t)
-
-			// Build interchain
-			require.NoError(t, ic.Build(ctx, eRep, interchaintest.InterchainBuildOptions{
-				TestName:  t.Name(),
-				Client:    client,
-				NetworkID: network,
-
-				SkipPathCreation: false,
-			}))
-
-			t.Parallel()
-
-			// Get Channel ID
-			gaiaChans, err := r.GetChannels(ctx, eRep, gaia.Config().ChainID)
-			require.NoError(t, err)
-			gaiaChannel := gaiaChans[0]
-			osmosisChannel := gaiaChans[0].Counterparty
-
-			// Create and Fund User Wallets
-			fundAmount := sdkmath.NewInt(10_000_000)
-
-			// Tiny amount of funding, not enough to pay for a single TX fee (the GRANTER should be paying the fee)
-			granteeFundAmount := sdkmath.NewInt(10)
-			granteeKeyPrefix := "grantee1"
-			grantee2KeyPrefix := "grantee2"
-			grantee3KeyPrefix := "grantee3"
-			granterKeyPrefix := "default"
-
-			mnemonicAny := genMnemonic(t)
-			gaiaGranterWallet, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, granterKeyPrefix, mnemonicAny, fundAmount, gaia)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			gaiaGranteeWallet, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, granteeKeyPrefix, mnemonicAny, granteeFundAmount, gaia)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			gaiaGrantee2Wallet, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, grantee2KeyPrefix, mnemonicAny, granteeFundAmount, gaia)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			gaiaGrantee3Wallet, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, grantee3KeyPrefix, mnemonicAny, granteeFundAmount, gaia)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			osmosisUser, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, "recipient", mnemonicAny, fundAmount, osmosis)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			gaiaUser, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, "recipient", mnemonicAny, fundAmount, gaia)
-			require.NoError(t, err)
-
-			mnemonic := gaiaGranterWallet.Mnemonic()
-			fmt.Printf("Wallet mnemonic: %s\n", mnemonic)
-
-			rand.Seed(time.Now().UnixNano())
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				gaia.Config(),
-				gaiaGranterWallet.KeyName(),
-				gaiaGranterWallet.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				gaia.Config(),
-				gaiaGranteeWallet.KeyName(),
-				gaiaGranteeWallet.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				gaia.Config(),
-				gaiaGrantee2Wallet.KeyName(),
-				gaiaGrantee2Wallet.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				gaia.Config(),
-				gaiaGrantee3Wallet.KeyName(),
-				gaiaGrantee3Wallet.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				osmosis.Config(),
-				osmosisUser.KeyName(),
-				osmosisUser.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", osmosis.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				osmosis.Config(),
-				gaiaUser.KeyName(),
-				gaiaUser.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			gaiaGranteeAddr := gaiaGranteeWallet.FormattedAddress()
-			gaiaGrantee2Addr := gaiaGrantee2Wallet.FormattedAddress()
-			gaiaGrantee3Addr := gaiaGrantee3Wallet.FormattedAddress()
-			gaiaGranterAddr := gaiaGranterWallet.FormattedAddress()
-
-			granteeCsv := gaiaGranteeWallet.KeyName() + "," + gaiaGrantee2Wallet.KeyName() + "," + gaiaGrantee3Wallet.KeyName()
-
-			//You MUST run the configure feegrant command prior to starting the relayer, otherwise it'd be like you never set it up at all (within this test)
-			//Note that Gaia supports feegrants, but Osmosis does not (x/feegrant module, or any compatible module, is not included in Osmosis SDK app modules)
-			localRelayer := r.(*Relayer)
-			res := localRelayer.Sys().Run(logger, "chains", "configure", "feegrant", "basicallowance", gaia.Config().ChainID, gaiaGranterWallet.KeyName(), "--grantees", granteeCsv, "--overwrite-granter")
-			if res.Err != nil {
-				fmt.Printf("configure feegrant results: %s\n", res.Stdout.String())
-				t.Fatalf("failed to rly config feegrants: %v", res.Err)
-			}
-
-			//Map of feegranted chains and the feegrant info for the chain
-			feegrantedChains := map[string]*chainFeegrantInfo{}
-			feegrantedChains[gaia.Config().ChainID] = &chainFeegrantInfo{granter: gaiaGranterAddr, grantees: []string{gaiaGranteeAddr, gaiaGrantee2Addr, gaiaGrantee3Addr}}
-
-			time.Sleep(14 * time.Second) //commit a couple blocks
-			r.StartRelayer(ctx, eRep, ibcPath)
-
-			// Send Transaction
-			amountToSend := sdkmath.NewInt(1_000)
-
-			gaiaDstAddress := types.MustBech32ifyAddressBytes(osmosis.Config().Bech32Prefix, gaiaUser.Address())
-			osmosisDstAddress := types.MustBech32ifyAddressBytes(gaia.Config().Bech32Prefix, osmosisUser.Address())
-
-			gaiaHeight, err := gaia.Height(ctx)
-			require.NoError(t, err)
-
-			osmosisHeight, err := osmosis.Height(ctx)
-			require.NoError(t, err)
-
-			var eg errgroup.Group
-			var gaiaTx ibc.Tx
-
-			eg.Go(func() error {
-				gaiaTx, err = gaia.SendIBCTransfer(ctx, gaiaChannel.ChannelID, gaiaUser.KeyName(), ibc.WalletAmount{
-					Address: gaiaDstAddress,
-					Denom:   gaia.Config().Denom,
-					Amount:  amountToSend,
-				},
-					ibc.TransferOptions{},
-				)
-				if err != nil {
-					return err
-				}
-				if err := gaiaTx.Validate(); err != nil {
-					return err
-				}
-
-				_, err = testutil.PollForAck(ctx, gaia, gaiaHeight, gaiaHeight+20, gaiaTx.Packet)
-				return err
-			})
-
-			eg.Go(func() error {
-				tx, err := osmosis.SendIBCTransfer(ctx, osmosisChannel.ChannelID, osmosisUser.KeyName(), ibc.WalletAmount{
-					Address: osmosisDstAddress,
-					Denom:   osmosis.Config().Denom,
-					Amount:  amountToSend,
-				},
-					ibc.TransferOptions{},
-				)
-				if err != nil {
-					return err
-				}
-				if err := tx.Validate(); err != nil {
-					return err
-				}
-				_, err = testutil.PollForAck(ctx, osmosis, osmosisHeight, osmosisHeight+20, tx.Packet)
-				return err
-			})
-
-			eg.Go(func() error {
-				tx, err := osmosis.SendIBCTransfer(ctx, osmosisChannel.ChannelID, osmosisUser.KeyName(), ibc.WalletAmount{
-					Address: osmosisDstAddress,
-					Denom:   osmosis.Config().Denom,
-					Amount:  amountToSend,
-				},
-					ibc.TransferOptions{},
-				)
-				if err != nil {
-					return err
-				}
-				if err := tx.Validate(); err != nil {
-					return err
-				}
-				_, err = testutil.PollForAck(ctx, osmosis, osmosisHeight, osmosisHeight+20, tx.Packet)
-				return err
-			})
-
-			eg.Go(func() error {
-				tx, err := osmosis.SendIBCTransfer(ctx, osmosisChannel.ChannelID, osmosisUser.KeyName(), ibc.WalletAmount{
-					Address: osmosisDstAddress,
-					Denom:   osmosis.Config().Denom,
-					Amount:  amountToSend,
-				},
-					ibc.TransferOptions{},
-				)
-				if err != nil {
-					return err
-				}
-				if err := tx.Validate(); err != nil {
-					return err
-				}
-				_, err = testutil.PollForAck(ctx, osmosis, osmosisHeight, osmosisHeight+20, tx.Packet)
-				return err
-			})
-
-			require.NoError(t, err)
-			require.NoError(t, eg.Wait())
-
-			feegrantMsgSigners := map[string][]string{} //chain to list of signers
-
-			for len(processor.PathProcMessageCollector) > 0 {
-				select {
-				case curr, ok := <-processor.PathProcMessageCollector:
-					if ok && curr.Error == nil && curr.SuccessfulTx {
-						cProv, cosmProv := curr.DestinationChain.(*cosmos.CosmosProvider)
-						if cosmProv {
-							chain := cProv.PCfg.ChainID
-							feegrantInfo, isFeegrantedChain := feegrantedChains[chain]
-							if isFeegrantedChain && !strings.Contains(cProv.PCfg.KeyDirectory, t.Name()) {
-								//This would indicate that a parallel test is inserting msgs into the queue.
-								//We can safely skip over any messages inserted by other test cases.
-								fmt.Println("Skipping PathProcessorMessageResp from unrelated Parallel test case")
-								continue
-							}
-
-							done := cProv.SetSDKContext()
-
-							hash, err := hex.DecodeString(curr.Response.TxHash)
-							require.Nil(t, err)
-							txResp, err := TxWithRetry(ctx, cProv.ConsensusClient, hash)
-							require.Nil(t, err)
-
-							require.Nil(t, err)
-							dc := cProv.Cdc.TxConfig.TxDecoder()
-							tx, err := dc(txResp.Tx)
-							require.Nil(t, err)
-							builder, err := cProv.Cdc.TxConfig.WrapTxBuilder(tx)
-							require.Nil(t, err)
-							txFinder := builder.(protoTxProvider)
-							fullTx := txFinder.GetProtoTx()
-							isFeegrantedMsg := false
-
-							msgs := ""
-							msgType := ""
-							for _, m := range fullTx.GetMsgs() {
-								msgType = types.MsgTypeURL(m)
-								//We want all IBC transfers (on an open channel/connection) to be feegranted in round robin fashion
-								if msgType == "/ibc.core.channel.v1.MsgRecvPacket" || msgType == "/ibc.core.channel.v1.MsgAcknowledgement" {
-									isFeegrantedMsg = true
-									msgs += msgType + ", "
-								} else {
-									msgs += msgType + ", "
-								}
-							}
-
-							//It's required that TXs be feegranted in a round robin fashion for this chain and message type
-							if isFeegrantedChain && isFeegrantedMsg {
-								fmt.Printf("Msg types: %+v\n", msgs)
-
-								signers, _, err := cProv.Cdc.Marshaler.GetMsgV1Signers(fullTx)
-								require.NoError(t, err)
-
-								require.Equal(t, len(signers), 1)
-								granter := fullTx.FeeGranter(cProv.Cdc.Marshaler)
-
-								//Feegranter for the TX that was signed on chain must be the relayer chain's configured feegranter
-								require.Equal(t, feegrantInfo.granter, string(granter))
-								require.NotEmpty(t, granter)
-
-								for _, msg := range fullTx.GetMsgs() {
-									msgType = types.MsgTypeURL(msg)
-									//We want all IBC transfers (on an open channel/connection) to be feegranted in round robin fashion
-									if msgType == "/ibc.core.channel.v1.MsgRecvPacket" {
-										c := msg.(*chantypes.MsgRecvPacket)
-										appData := c.Packet.GetData()
-										tokenTransfer := &transfertypes.FungibleTokenPacketData{}
-										err := tokenTransfer.Unmarshal(appData)
-										if err == nil {
-											fmt.Printf("%+v\n", tokenTransfer)
-										} else {
-											fmt.Println(string(appData))
-										}
-									}
-								}
-
-								//Grantee for the TX that was signed on chain must be a configured grantee in the relayer's chain feegrants.
-								//In addition, the grantee must be used in round robin fashion
-								//expectedGrantee := nextGrantee(feegrantInfo)
-								actualGrantee := string(signers[0])
-								signerList, ok := feegrantMsgSigners[chain]
-								if ok {
-									signerList = append(signerList, actualGrantee)
-									feegrantMsgSigners[chain] = signerList
-								} else {
-									feegrantMsgSigners[chain] = []string{actualGrantee}
-								}
-								fmt.Printf("Chain: %s, msg type: %s, height: %d, signer: %s, granter: %s\n", chain, msgType, curr.Response.Height, actualGrantee, string(granter))
-							}
-							done()
-						}
-					}
-				default:
-					fmt.Println("Unknown channel message")
-				}
-			}
-
-			for chain, signers := range feegrantMsgSigners {
-				require.Equal(t, chain, gaia.Config().ChainID)
-				signerCountMap := map[string]int{}
-
-				for _, signer := range signers {
-					count, ok := signerCountMap[signer]
-					if ok {
-						signerCountMap[signer] = count + 1
-					} else {
-						signerCountMap[signer] = 1
-					}
-				}
-
-				highestCount := 0
-				for _, count := range signerCountMap {
-					if count > highestCount {
-						highestCount = count
-					}
-				}
-
-				//At least one feegranter must have signed a TX
-				require.GreaterOrEqual(t, highestCount, 1)
-
-				//All of the feegrantees must have signed at least one TX
-				expectedFeegrantInfo := feegrantedChains[chain]
-				require.Equal(t, len(signerCountMap), len(expectedFeegrantInfo.grantees))
-
-				// verify that TXs were signed in a round robin fashion.
-				// no grantee should have signed more TXs than any other grantee (off by one is allowed).
-				for signer, count := range signerCountMap {
-					fmt.Printf("signer %s signed %d feegranted TXs \n", signer, count)
-					require.LessOrEqual(t, highestCount-count, 1)
-				}
-			}
-
-			// Trace IBC Denom
-			gaiaDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(osmosisChannel.PortID, osmosisChannel.ChannelID, gaia.Config().Denom))
-			gaiaIbcDenom := gaiaDenomTrace.IBCDenom()
-
-			osmosisDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(gaiaChannel.PortID, gaiaChannel.ChannelID, osmosis.Config().Denom))
-			osmosisIbcDenom := osmosisDenomTrace.IBCDenom()
-
-			// Test destination wallets have increased funds
-			gaiaIBCBalance, err := osmosis.GetBalance(ctx, gaiaDstAddress, gaiaIbcDenom)
-			require.NoError(t, err)
-			require.True(t, amountToSend.Equal(gaiaIBCBalance))
-
-			osmosisIBCBalance, err := gaia.GetBalance(ctx, osmosisDstAddress, osmosisIbcDenom)
-			require.NoError(t, err)
-			require.True(t, amountToSend.MulRaw(3).Equal(osmosisIBCBalance))
-
-			// Test grantee still has exact amount expected
-			gaiaGranteeIBCBalance, err := gaia.GetBalance(ctx, gaiaGranteeAddr, gaia.Config().Denom)
-			require.NoError(t, err)
-			require.True(t, gaiaGranteeIBCBalance.Equal(granteeFundAmount))
-
-			// Test granter has less than they started with, meaning fees came from their account
-			gaiaGranterIBCBalance, err := gaia.GetBalance(ctx, gaiaGranterAddr, gaia.Config().Denom)
-			require.NoError(t, err)
-			require.True(t, gaiaGranterIBCBalance.LT(fundAmount))
-			r.StopRelayer(ctx, eRep)
+}
+
+func runFeegrantTestCases(
+	t *testing.T,
+	logger *zap.Logger,
+	tests [][]*interchaintest.ChainSpec,
+	externalGranter bool,
+) {
+	for _, specs := range tests {
+		testName := fmt.Sprintf("%s,%s", specs[0].Name, specs[1].Name)
+		t.Run(testName, func(t *testing.T) {
+			runFeegrantScenario(t, logger, specs, externalGranter)
 		})
 	}
+}
+
+func runFeegrantScenario(
+	t *testing.T,
+	logger *zap.Logger,
+	specs []*interchaintest.ChainSpec,
+	externalGranter bool,
+) {
+	scenario := buildFeegrantScenario(t, context.Background(), specs)
+	t.Parallel()
+
+	if externalGranter {
+		feegrant.RegisterInterfaces(scenario.gaia.Config().EncodingConfig.InterfaceRegistry)
+	}
+
+	loadFeegrantChannel(t, scenario)
+	prepareFeegrantWallets(t, scenario, externalGranter)
+	if externalGranter {
+		grantExternalFeeAllowances(t, scenario)
+	}
+
+	fmt.Printf("Wallet mnemonic: %s\n", scenario.wallets.granter.Mnemonic())
+	rand.Seed(time.Now().UnixNano())
+	restoreFeegrantKeys(t, scenario, !externalGranter)
+	configureFeegrant(t, logger, scenario, externalGranter)
+
+	time.Sleep(14 * time.Second) // commit a couple blocks
+	scenario.relayer.StartRelayer(scenario.ctx, scenario.reporter, feegrantPath)
+	transferResult := executeFeegrantTransfers(t, scenario)
+	signers := collectFeegrantSigners(t, scenario)
+	validateFeegrantSigners(t, scenario, signers)
+	validateFeegrantBalances(t, scenario, transferResult)
+	scenario.relayer.StopRelayer(scenario.ctx, scenario.reporter)
+}
+
+func buildFeegrantScenario(
+	t *testing.T,
+	ctx context.Context,
+	specs []*interchaintest.ChainSpec,
+) *feegrantTestScenario {
+	chainFactory := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), specs)
+	chains, err := chainFactory.Chains(t.Name())
+	require.NoError(t, err)
+	gaia, counterparty := chains[0], chains[1]
+
+	r := NewRelayerFactory(RelayerConfig{
+		Processor:           relayer.ProcessorEvents,
+		InitialBlockHistory: 100,
+	}).Build(t, nil, "")
+	processor.PathProcMessageCollector = make(chan *processor.PathProcessorMessageResp, 10000)
+
+	ic := interchaintest.NewInterchain().
+		AddChain(gaia).
+		AddChain(counterparty).
+		AddRelayer(r, "relayer").
+		AddLink(interchaintest.InterchainLink{
+			Chain1:  gaia,
+			Chain2:  counterparty,
+			Relayer: r,
+			Path:    feegrantPath,
+		})
+
+	reporter := testreporter.NewNopReporter().RelayerExecReporter(t)
+	client, network := interchaintest.DockerSetup(t)
+	require.NoError(t, ic.Build(ctx, reporter, interchaintest.InterchainBuildOptions{
+		TestName:         t.Name(),
+		Client:           client,
+		NetworkID:        network,
+		SkipPathCreation: false,
+	}))
+
+	return &feegrantTestScenario{
+		ctx:          ctx,
+		relayer:      r,
+		reporter:     reporter,
+		gaia:         gaia,
+		counterparty: counterparty,
+		fundAmount:   sdkmath.NewInt(10_000_000),
+	}
+}
+
+func loadFeegrantChannel(t *testing.T, scenario *feegrantTestScenario) {
+	channels, err := scenario.relayer.GetChannels(
+		scenario.ctx,
+		scenario.reporter,
+		scenario.gaia.Config().ChainID,
+	)
+	require.NoError(t, err)
+	scenario.gaiaChannel = channels[0]
+	scenario.counterpartyChan = channels[0].Counterparty
+}
+
+func prepareFeegrantWallets(t *testing.T, scenario *feegrantTestScenario, externalGranter bool) {
+	if externalGranter {
+		scenario.granteeFund = sdkmath.ZeroInt()
+		scenario.wallets = createExternalFeegrantWallets(t, scenario)
+		return
+	}
+
+	scenario.granteeFund = sdkmath.NewInt(10)
+	scenario.wallets = createManagedFeegrantWallets(t, scenario)
+}
+
+func createManagedFeegrantWallets(t *testing.T, scenario *feegrantTestScenario) feegrantWalletSet {
+	return feegrantWalletSet{
+		granter: newFundedFeegrantWallet(t, scenario.ctx, "default", scenario.fundAmount, scenario.gaia),
+		grantees: []ibc.Wallet{
+			newFundedFeegrantWallet(t, scenario.ctx, "grantee1", scenario.granteeFund, scenario.gaia),
+			newFundedFeegrantWallet(t, scenario.ctx, "grantee2", scenario.granteeFund, scenario.gaia),
+			newFundedFeegrantWallet(t, scenario.ctx, "grantee3", scenario.granteeFund, scenario.gaia),
+		},
+		counterpartyUser: newFundedFeegrantWallet(t, scenario.ctx, "recipient", scenario.fundAmount, scenario.counterparty),
+		gaiaUser:         newFundedFeegrantWallet(t, scenario.ctx, "recipient", scenario.fundAmount, scenario.gaia),
+	}
+}
+
+func createExternalFeegrantWallets(t *testing.T, scenario *feegrantTestScenario) feegrantWalletSet {
+	return feegrantWalletSet{
+		grantees: []ibc.Wallet{
+			newUnfundedFeegrantWallet(t, scenario.ctx, "grantee1", scenario.gaia),
+			newUnfundedFeegrantWallet(t, scenario.ctx, "grantee2", scenario.gaia),
+			newUnfundedFeegrantWallet(t, scenario.ctx, "grantee3", scenario.gaia),
+		},
+		counterpartyUser: newFundedFeegrantWallet(t, scenario.ctx, "recipient", scenario.fundAmount, scenario.counterparty),
+		gaiaUser:         newFundedFeegrantWallet(t, scenario.ctx, "recipient", scenario.fundAmount, scenario.gaia),
+		granter:          newFundedFeegrantWallet(t, scenario.ctx, "default", scenario.fundAmount, scenario.gaia),
+	}
+}
+
+func newFundedFeegrantWallet(
+	t *testing.T,
+	ctx context.Context,
+	keyPrefix string,
+	amount sdkmath.Int,
+	chain ibc.Chain,
+) ibc.Wallet {
+	wallet, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, keyPrefix, genMnemonic(t), amount, chain)
+	require.NoError(t, err)
+	return wallet
+}
+
+func newUnfundedFeegrantWallet(
+	t *testing.T,
+	ctx context.Context,
+	keyPrefix string,
+	chain ibc.Chain,
+) ibc.Wallet {
+	wallet, err := buildUserUnfunded(ctx, keyPrefix, genMnemonic(t), chain)
+	require.NoError(t, err)
+	return wallet
+}
+
+func grantExternalFeeAllowances(t *testing.T, scenario *feegrantTestScenario) {
+	done := cosmos.SetSDKConfigContext(scenario.gaia.Config().Bech32Prefix)
+	for _, grantee := range scenario.wallets.grantees {
+		err := Feegrant(
+			t,
+			scenario.gaia.(*cosmosv8.CosmosChain),
+			scenario.wallets.granter,
+			scenario.wallets.granter.Address(),
+			grantee.Address(),
+			scenario.wallets.granter.FormattedAddress(),
+			grantee.FormattedAddress(),
+		)
+		require.NoError(t, err)
+	}
+	done()
+}
+
+func restoreFeegrantKeys(t *testing.T, scenario *feegrantTestScenario, includeGranter bool) {
+	requests := []restoreKeyRequest{
+		{chain: scenario.gaia, wallet: scenario.wallets.grantees[0], errorChainID: scenario.gaia.Config().ChainID},
+		{chain: scenario.gaia, wallet: scenario.wallets.grantees[1], errorChainID: scenario.gaia.Config().ChainID},
+		{chain: scenario.gaia, wallet: scenario.wallets.grantees[2], errorChainID: scenario.gaia.Config().ChainID},
+		{chain: scenario.counterparty, wallet: scenario.wallets.counterpartyUser, errorChainID: scenario.counterparty.Config().ChainID},
+		{chain: scenario.counterparty, wallet: scenario.wallets.gaiaUser, errorChainID: scenario.gaia.Config().ChainID},
+	}
+	if includeGranter {
+		granter := restoreKeyRequest{
+			chain:        scenario.gaia,
+			wallet:       scenario.wallets.granter,
+			errorChainID: scenario.gaia.Config().ChainID,
+		}
+		requests = append([]restoreKeyRequest{granter}, requests...)
+	}
+
+	for _, request := range requests {
+		restoreFeegrantKey(t, scenario, request)
+	}
+}
+
+func restoreFeegrantKey(t *testing.T, scenario *feegrantTestScenario, request restoreKeyRequest) {
+	err := scenario.relayer.RestoreKey(
+		scenario.ctx,
+		scenario.reporter,
+		request.chain.Config(),
+		request.wallet.KeyName(),
+		request.wallet.Mnemonic(),
+	)
+	if err != nil {
+		t.Fatalf("failed to restore granter key to relayer for chain %s: %s", request.errorChainID, err.Error())
+	}
+}
+
+func configureFeegrant(
+	t *testing.T,
+	logger *zap.Logger,
+	scenario *feegrantTestScenario,
+	externalGranter bool,
+) {
+	granteeKeyNames := make([]string, 0, len(scenario.wallets.grantees))
+	granteeAddresses := make([]string, 0, len(scenario.wallets.grantees))
+	for _, grantee := range scenario.wallets.grantees {
+		granteeKeyNames = append(granteeKeyNames, grantee.KeyName())
+		granteeAddresses = append(granteeAddresses, grantee.FormattedAddress())
+	}
+
+	configuredGranter := scenario.wallets.granter.KeyName()
+	if externalGranter {
+		configuredGranter = scenario.wallets.granter.FormattedAddress()
+	}
+
+	localRelayer := scenario.relayer.(*Relayer)
+	res := localRelayer.Sys().Run(
+		logger,
+		"chains", "configure", "feegrant", "basicallowance",
+		scenario.gaia.Config().ChainID,
+		configuredGranter,
+		"--grantees", strings.Join(granteeKeyNames, ","),
+		"--overwrite-granter",
+	)
+	if res.Err != nil {
+		fmt.Printf("configure feegrant results: %s\n", res.Stdout.String())
+		t.Fatalf("failed to rly config feegrants: %v", res.Err)
+	}
+
+	scenario.feegrantedChains = map[string]*chainFeegrantInfo{
+		scenario.gaia.Config().ChainID: {
+			granter:  scenario.wallets.granter.FormattedAddress(),
+			grantees: granteeAddresses,
+		},
+	}
+}
+
+func executeFeegrantTransfers(t *testing.T, scenario *feegrantTestScenario) feegrantTransferResult {
+	result := buildFeegrantTransferResult(scenario)
+	gaiaHeight, err := scenario.gaia.Height(scenario.ctx)
+	require.NoError(t, err)
+	counterpartyHeight, err := scenario.counterparty.Height(scenario.ctx)
+	require.NoError(t, err)
+
+	var group errgroup.Group
+	group.Go(func() error {
+		return sendFeegrantTransfer(
+			scenario,
+			scenario.gaia,
+			scenario.gaiaChannel.ChannelID,
+			scenario.wallets.gaiaUser,
+			result.gaiaDestination,
+			result.amount,
+			gaiaHeight,
+		)
+	})
+	for range 3 {
+		group.Go(func() error {
+			return sendFeegrantTransfer(
+				scenario,
+				scenario.counterparty,
+				scenario.counterpartyChan.ChannelID,
+				scenario.wallets.counterpartyUser,
+				result.counterpartyDest,
+				result.amount,
+				counterpartyHeight,
+			)
+		})
+	}
+
+	require.NoError(t, err)
+	require.NoError(t, group.Wait())
+	return result
+}
+
+func buildFeegrantTransferResult(scenario *feegrantTestScenario) feegrantTransferResult {
+	gaiaDestination := types.MustBech32ifyAddressBytes(
+		scenario.counterparty.Config().Bech32Prefix,
+		scenario.wallets.gaiaUser.Address(),
+	)
+	counterpartyDestination := types.MustBech32ifyAddressBytes(
+		scenario.gaia.Config().Bech32Prefix,
+		scenario.wallets.counterpartyUser.Address(),
+	)
+	return feegrantTransferResult{
+		amount:           sdkmath.NewInt(1_000),
+		gaiaDestination:  gaiaDestination,
+		counterpartyDest: counterpartyDestination,
+	}
+}
+
+func sendFeegrantTransfer(
+	scenario *feegrantTestScenario,
+	chain ibc.Chain,
+	channelID string,
+	wallet ibc.Wallet,
+	destination string,
+	amount sdkmath.Int,
+	startHeight int64,
+) error {
+	tx, err := chain.SendIBCTransfer(
+		scenario.ctx,
+		channelID,
+		wallet.KeyName(),
+		ibc.WalletAmount{Address: destination, Denom: chain.Config().Denom, Amount: amount},
+		ibc.TransferOptions{},
+	)
+	if err != nil {
+		return err
+	}
+	if err := tx.Validate(); err != nil {
+		return err
+	}
+
+	_, err = testutil.PollForAck(scenario.ctx, chain, startHeight, startHeight+20, tx.Packet)
+	return err
+}
+
+func collectFeegrantSigners(t *testing.T, scenario *feegrantTestScenario) map[string][]string {
+	signers := map[string][]string{}
+	for len(processor.PathProcMessageCollector) > 0 {
+		select {
+		case current, ok := <-processor.PathProcMessageCollector:
+			if ok {
+				collectFeegrantSigner(t, scenario, current, signers)
+			}
+		default:
+			fmt.Println("Unknown channel message")
+		}
+	}
+	return signers
+}
+
+func collectFeegrantSigner(
+	t *testing.T,
+	scenario *feegrantTestScenario,
+	current *processor.PathProcessorMessageResp,
+	signers map[string][]string,
+) {
+	if current.Error != nil || !current.SuccessfulTx {
+		return
+	}
+	provider, ok := current.DestinationChain.(*cosmos.CosmosProvider)
+	if !ok {
+		return
+	}
+
+	chainID := provider.PCfg.ChainID
+	feegrantInfo, feegrantedChain := scenario.feegrantedChains[chainID]
+	if feegrantedChain && !strings.Contains(provider.PCfg.KeyDirectory, t.Name()) {
+		fmt.Println("Skipping PathProcessorMessageResp from unrelated Parallel test case")
+		return
+	}
+
+	done := provider.SetSDKContext()
+	fullTx := decodeFeegrantTx(t, scenario.ctx, provider, current.Response.TxHash)
+	feegrantedMessage, messageTypes := summarizeFeegrantMessages(fullTx)
+	if feegrantedChain && feegrantedMessage {
+		recordFeegrantSigner(t, provider, current, fullTx, feegrantInfo, chainID, messageTypes, signers)
+	}
+	done()
+}
+
+func decodeFeegrantTx(
+	t *testing.T,
+	ctx context.Context,
+	provider *cosmos.CosmosProvider,
+	txHash string,
+) *txtypes.Tx {
+	hash, err := hex.DecodeString(txHash)
+	require.Nil(t, err)
+	txResponse, err := TxWithRetry(ctx, provider.ConsensusClient, hash)
+	require.Nil(t, err)
+	require.Nil(t, err)
+
+	decoder := provider.Cdc.TxConfig.TxDecoder()
+	tx, err := decoder(txResponse.Tx)
+	require.Nil(t, err)
+	builder, err := provider.Cdc.TxConfig.WrapTxBuilder(tx)
+	require.Nil(t, err)
+	return builder.(protoTxProvider).GetProtoTx()
+}
+
+func summarizeFeegrantMessages(tx *txtypes.Tx) (bool, string) {
+	feegrantedMessage := false
+	messageTypes := ""
+	for _, message := range tx.GetMsgs() {
+		messageType := types.MsgTypeURL(message)
+		if messageType == recvPacketMsgType || messageType == acknowledgementMsgType {
+			feegrantedMessage = true
+		}
+		messageTypes += messageType + ", "
+	}
+	return feegrantedMessage, messageTypes
+}
+
+func recordFeegrantSigner(
+	t *testing.T,
+	provider *cosmos.CosmosProvider,
+	current *processor.PathProcessorMessageResp,
+	tx *txtypes.Tx,
+	feegrantInfo *chainFeegrantInfo,
+	chainID string,
+	messageTypes string,
+	signersByChain map[string][]string,
+) {
+	fmt.Printf("Msg types: %+v\n", messageTypes)
+	signers, _, err := provider.Cdc.Marshaler.GetMsgV1Signers(tx)
+	require.NoError(t, err)
+	require.Equal(t, len(signers), 1)
+
+	granter := tx.FeeGranter(provider.Cdc.Marshaler)
+	require.Equal(t, feegrantInfo.granter, string(granter))
+	require.NotEmpty(t, granter)
+	lastMessageType := logFeegrantPacketData(tx)
+
+	actualGrantee := string(signers[0])
+	signersByChain[chainID] = append(signersByChain[chainID], actualGrantee)
+	fmt.Printf(
+		"Chain: %s, msg type: %s, height: %d, signer: %s, granter: %s\n",
+		chainID,
+		lastMessageType,
+		current.Response.Height,
+		actualGrantee,
+		string(granter),
+	)
+}
+
+func logFeegrantPacketData(tx *txtypes.Tx) string {
+	lastMessageType := ""
+	for _, message := range tx.GetMsgs() {
+		lastMessageType = types.MsgTypeURL(message)
+		if lastMessageType != recvPacketMsgType {
+			continue
+		}
+
+		receivePacket := message.(*chantypes.MsgRecvPacket)
+		appData := receivePacket.Packet.GetData()
+		tokenTransfer := &transfertypes.FungibleTokenPacketData{}
+		if err := tokenTransfer.Unmarshal(appData); err == nil {
+			fmt.Printf("%+v\n", tokenTransfer)
+		} else {
+			fmt.Println(string(appData))
+		}
+	}
+	return lastMessageType
+}
+
+func validateFeegrantSigners(
+	t *testing.T,
+	scenario *feegrantTestScenario,
+	signersByChain map[string][]string,
+) {
+	for chainID, signers := range signersByChain {
+		require.Equal(t, chainID, scenario.gaia.Config().ChainID)
+		counts := countFeegrantSigners(signers)
+		highestCount := highestFeegrantSignerCount(counts)
+
+		require.GreaterOrEqual(t, highestCount, 1)
+		expectedFeegrantInfo := scenario.feegrantedChains[chainID]
+		require.Equal(t, len(counts), len(expectedFeegrantInfo.grantees))
+		assertRoundRobinFeegrantSigners(t, counts, highestCount)
+	}
+}
+
+func countFeegrantSigners(signers []string) map[string]int {
+	counts := make(map[string]int, len(signers))
+	for _, signer := range signers {
+		counts[signer]++
+	}
+	return counts
+}
+
+func highestFeegrantSignerCount(counts map[string]int) int {
+	highestCount := 0
+	for _, count := range counts {
+		if count > highestCount {
+			highestCount = count
+		}
+	}
+	return highestCount
+}
+
+func assertRoundRobinFeegrantSigners(t *testing.T, counts map[string]int, highestCount int) {
+	for signer, count := range counts {
+		fmt.Printf("signer %s signed %d feegranted TXs \n", signer, count)
+		require.LessOrEqual(t, highestCount-count, 1)
+	}
+}
+
+func validateFeegrantBalances(
+	t *testing.T,
+	scenario *feegrantTestScenario,
+	result feegrantTransferResult,
+) {
+	gaiaDenomTrace := transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(
+		scenario.counterpartyChan.PortID,
+		scenario.counterpartyChan.ChannelID,
+		scenario.gaia.Config().Denom,
+	))
+	gaiaIBCDenom := gaiaDenomTrace.IBCDenom()
+	counterpartyDenomTrace := transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(
+		scenario.gaiaChannel.PortID,
+		scenario.gaiaChannel.ChannelID,
+		scenario.counterparty.Config().Denom,
+	))
+	counterpartyIBCDenom := counterpartyDenomTrace.IBCDenom()
+
+	gaiaIBCBalance, err := scenario.counterparty.GetBalance(
+		scenario.ctx,
+		result.gaiaDestination,
+		gaiaIBCDenom,
+	)
+	require.NoError(t, err)
+	require.True(t, result.amount.Equal(gaiaIBCBalance))
+
+	counterpartyIBCBalance, err := scenario.gaia.GetBalance(
+		scenario.ctx,
+		result.counterpartyDest,
+		counterpartyIBCDenom,
+	)
+	require.NoError(t, err)
+	require.True(t, result.amount.MulRaw(3).Equal(counterpartyIBCBalance))
+
+	granteeBalance, err := scenario.gaia.GetBalance(
+		scenario.ctx,
+		scenario.wallets.grantees[0].FormattedAddress(),
+		scenario.gaia.Config().Denom,
+	)
+	require.NoError(t, err)
+	require.True(t, granteeBalance.Equal(scenario.granteeFund))
+
+	granterBalance, err := scenario.gaia.GetBalance(
+		scenario.ctx,
+		scenario.wallets.granter.FormattedAddress(),
+		scenario.gaia.Config().Denom,
+	)
+	require.NoError(t, err)
+	require.True(t, granterBalance.LT(scenario.fundAmount))
 }
 
 func TxWithRetry(ctx context.Context, client cclient.ConsensusClient, hash []byte) (*coretypes.ResultTx, error) {
@@ -549,467 +701,6 @@ func TxWithRetry(ctx context.Context, client cclient.ConsensusClient, hash []byt
 	}
 
 	return res, err
-}
-
-// TestRelayerFeeGrantExternal Feegrant on a single chain where the granter is an externally controlled address (no private key).
-// Run this test with e.g. go test -timeout 300s -run ^TestRelayerFeeGrantExternal$ github.com/cosmos/relayer/v2/ibctest.
-func TestRelayerFeeGrantExternal(t *testing.T) {
-	ctx := context.Background()
-	logger := zaptest.NewLogger(t)
-
-	nv := 1
-	nf := 0
-
-	var tests = [][]*interchaintest.ChainSpec{
-		{
-			{Name: "gaia", ChainName: "gaia", Version: "v7.0.3", NumValidators: &nv, NumFullNodes: &nf},
-			{Name: "osmosis", ChainName: "osmosis", Version: "v14.0.1", NumValidators: &nv, NumFullNodes: &nf},
-		},
-		{
-			{Name: "gaia", ChainName: "gaia", Version: "v7.0.3", NumValidators: &nv, NumFullNodes: &nf},
-			{Name: "kujira", ChainName: "kujira", Version: "v0.8.7", NumValidators: &nv, NumFullNodes: &nf},
-		},
-	}
-
-	for _, tt := range tests {
-		testname := fmt.Sprintf("%s,%s", tt[0].Name, tt[1].Name)
-		t.Run(testname, func(t *testing.T) {
-
-			// Chain Factory
-			cf := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), tt)
-
-			chains, err := cf.Chains(t.Name())
-			require.NoError(t, err)
-			gaia, osmosis := chains[0], chains[1]
-
-			// Relayer Factory to construct relayer
-			r := NewRelayerFactory(RelayerConfig{
-				Processor:           relayer.ProcessorEvents,
-				InitialBlockHistory: 100,
-			}).Build(t, nil, "")
-
-			processor.PathProcMessageCollector = make(chan *processor.PathProcessorMessageResp, 10000)
-
-			// Prep Interchain
-			const ibcPath = "gaia-osmosis"
-			ic := interchaintest.NewInterchain().
-				AddChain(gaia).
-				AddChain(osmosis).
-				AddRelayer(r, "relayer").
-				AddLink(interchaintest.InterchainLink{
-					Chain1:  gaia,
-					Chain2:  osmosis,
-					Relayer: r,
-					Path:    ibcPath,
-				})
-
-			// Reporter/logs
-			rep := testreporter.NewNopReporter()
-			eRep := rep.RelayerExecReporter(t)
-
-			client, network := interchaintest.DockerSetup(t)
-
-			// Build interchain
-			require.NoError(t, ic.Build(ctx, eRep, interchaintest.InterchainBuildOptions{
-				TestName:  t.Name(),
-				Client:    client,
-				NetworkID: network,
-
-				SkipPathCreation: false,
-			}))
-
-			t.Parallel()
-
-			// Make sure feegrant codec is registered, since it is not by default
-			feegrant.RegisterInterfaces(gaia.Config().EncodingConfig.InterfaceRegistry)
-
-			// Get Channel ID
-			gaiaChans, err := r.GetChannels(ctx, eRep, gaia.Config().ChainID)
-			require.NoError(t, err)
-			gaiaChannel := gaiaChans[0]
-			osmosisChannel := gaiaChans[0].Counterparty
-
-			// Create and Fund User Wallets
-			fundAmount := sdkmath.NewInt(10_000_000)
-
-			// Tiny amount of funding, not enough to pay for a single TX fee (the GRANTER should be paying the fee)
-			granteeKeyPrefix := "grantee1"
-			grantee2KeyPrefix := "grantee2"
-			grantee3KeyPrefix := "grantee3"
-			granterKeyPrefix := "default"
-
-			mnemonicAny := genMnemonic(t)
-
-			gaiaGranteeWallet, err := buildUserUnfunded(ctx, granteeKeyPrefix, mnemonicAny, gaia)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			gaiaGrantee2Wallet, err := buildUserUnfunded(ctx, grantee2KeyPrefix, mnemonicAny, gaia)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			gaiaGrantee3Wallet, err := buildUserUnfunded(ctx, grantee3KeyPrefix, mnemonicAny, gaia)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			osmosisUser, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, "recipient", mnemonicAny, fundAmount, osmosis)
-			require.NoError(t, err)
-
-			mnemonicAny = genMnemonic(t)
-			gaiaUser, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, "recipient", mnemonicAny, fundAmount, gaia)
-			require.NoError(t, err)
-
-			// Fund the granter wallet on chain
-			mnemonicAny = genMnemonic(t)
-			gaiaGranterWallet, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, granterKeyPrefix, mnemonicAny, fundAmount, gaia)
-			require.NoError(t, err)
-
-			// Set SDK context to the right bech32 prefix
-			prefix := gaia.Config().Bech32Prefix
-			done := cosmos.SetSDKConfigContext(prefix)
-
-			// Feegrant each of the grantees
-			err = Feegrant(t, gaia.(*cosmosv8.CosmosChain), gaiaGranterWallet, gaiaGranterWallet.Address(), gaiaGranteeWallet.Address(), gaiaGranterWallet.FormattedAddress(), gaiaGranteeWallet.FormattedAddress())
-			require.NoError(t, err)
-			err = Feegrant(t, gaia.(*cosmosv8.CosmosChain), gaiaGranterWallet, gaiaGranterWallet.Address(), gaiaGrantee2Wallet.Address(), gaiaGranterWallet.FormattedAddress(), gaiaGrantee2Wallet.FormattedAddress())
-			require.NoError(t, err)
-			err = Feegrant(t, gaia.(*cosmosv8.CosmosChain), gaiaGranterWallet, gaiaGranterWallet.Address(), gaiaGrantee3Wallet.Address(), gaiaGranterWallet.FormattedAddress(), gaiaGrantee3Wallet.FormattedAddress())
-			require.NoError(t, err)
-			done()
-
-			mnemonic := gaiaGranterWallet.Mnemonic()
-			fmt.Printf("Wallet mnemonic: %s\n", mnemonic)
-
-			rand.Seed(time.Now().UnixNano())
-
-			// Notably, we do not restore the key for 'gaiaGranterWallet' to the relayer config.
-			// The relayer does not need the granter private key since it is owned externally.
-			// Below, the relayer restores the keys for each of the grantee wallets. It signs TXs with these keys.
-			// IBC chain config (above) is unrelated to RELAYER config so this step is necessary.
-			if err := r.RestoreKey(ctx,
-				eRep,
-				gaia.Config(),
-				gaiaGranteeWallet.KeyName(),
-				gaiaGranteeWallet.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				gaia.Config(),
-				gaiaGrantee2Wallet.KeyName(),
-				gaiaGrantee2Wallet.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				gaia.Config(),
-				gaiaGrantee3Wallet.KeyName(),
-				gaiaGrantee3Wallet.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				osmosis.Config(),
-				osmosisUser.KeyName(),
-				osmosisUser.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", osmosis.Config().ChainID, err.Error())
-			}
-
-			//IBC chain config is unrelated to RELAYER config so this step is necessary
-			if err := r.RestoreKey(ctx,
-				eRep,
-				osmosis.Config(),
-				gaiaUser.KeyName(),
-				gaiaUser.Mnemonic(),
-			); err != nil {
-				t.Fatalf("failed to restore granter key to relayer for chain %s: %s", gaia.Config().ChainID, err.Error())
-			}
-
-			gaiaGranteeAddr := gaiaGranteeWallet.FormattedAddress()
-			gaiaGrantee2Addr := gaiaGrantee2Wallet.FormattedAddress()
-			gaiaGrantee3Addr := gaiaGrantee3Wallet.FormattedAddress()
-			gaiaGranterAddr := gaiaGranterWallet.FormattedAddress()
-
-			granteeCsv := gaiaGranteeWallet.KeyName() + "," + gaiaGrantee2Wallet.KeyName() + "," + gaiaGrantee3Wallet.KeyName()
-
-			//You MUST run the configure feegrant command prior to starting the relayer, otherwise it'd be like you never set it up at all (within this test)
-			//Note that Gaia supports feegrants, but Osmosis does not (x/feegrant module, or any compatible module, is not included in Osmosis SDK app modules)
-			localRelayer := r.(*Relayer)
-			res := localRelayer.Sys().Run(logger, "chains", "configure", "feegrant", "basicallowance", gaia.Config().ChainID, gaiaGranterWallet.FormattedAddress(), "--grantees", granteeCsv, "--overwrite-granter")
-			if res.Err != nil {
-				fmt.Printf("configure feegrant results: %s\n", res.Stdout.String())
-				t.Fatalf("failed to rly config feegrants: %v", res.Err)
-			}
-
-			//Map of feegranted chains and the feegrant info for the chain
-			feegrantedChains := map[string]*chainFeegrantInfo{}
-			feegrantedChains[gaia.Config().ChainID] = &chainFeegrantInfo{granter: gaiaGranterAddr, grantees: []string{gaiaGranteeAddr, gaiaGrantee2Addr, gaiaGrantee3Addr}}
-
-			time.Sleep(14 * time.Second) //commit a couple blocks
-			r.StartRelayer(ctx, eRep, ibcPath)
-
-			// Send Transaction
-			amountToSend := sdkmath.NewInt(1_000)
-
-			gaiaDstAddress := types.MustBech32ifyAddressBytes(osmosis.Config().Bech32Prefix, gaiaUser.Address())
-			osmosisDstAddress := types.MustBech32ifyAddressBytes(gaia.Config().Bech32Prefix, osmosisUser.Address())
-
-			gaiaHeight, err := gaia.Height(ctx)
-			require.NoError(t, err)
-
-			osmosisHeight, err := osmosis.Height(ctx)
-			require.NoError(t, err)
-
-			var eg errgroup.Group
-			var gaiaTx ibc.Tx
-
-			eg.Go(func() error {
-				gaiaTx, err = gaia.SendIBCTransfer(ctx, gaiaChannel.ChannelID, gaiaUser.KeyName(), ibc.WalletAmount{
-					Address: gaiaDstAddress,
-					Denom:   gaia.Config().Denom,
-					Amount:  amountToSend,
-				},
-					ibc.TransferOptions{},
-				)
-				if err != nil {
-					return err
-				}
-				if err := gaiaTx.Validate(); err != nil {
-					return err
-				}
-
-				_, err = testutil.PollForAck(ctx, gaia, gaiaHeight, gaiaHeight+20, gaiaTx.Packet)
-				return err
-			})
-
-			eg.Go(func() error {
-				tx, err := osmosis.SendIBCTransfer(ctx, osmosisChannel.ChannelID, osmosisUser.KeyName(), ibc.WalletAmount{
-					Address: osmosisDstAddress,
-					Denom:   osmosis.Config().Denom,
-					Amount:  amountToSend,
-				},
-					ibc.TransferOptions{},
-				)
-				if err != nil {
-					return err
-				}
-				if err := tx.Validate(); err != nil {
-					return err
-				}
-				_, err = testutil.PollForAck(ctx, osmosis, osmosisHeight, osmosisHeight+20, tx.Packet)
-				return err
-			})
-
-			eg.Go(func() error {
-				tx, err := osmosis.SendIBCTransfer(ctx, osmosisChannel.ChannelID, osmosisUser.KeyName(), ibc.WalletAmount{
-					Address: osmosisDstAddress,
-					Denom:   osmosis.Config().Denom,
-					Amount:  amountToSend,
-				},
-					ibc.TransferOptions{},
-				)
-				if err != nil {
-					return err
-				}
-				if err := tx.Validate(); err != nil {
-					return err
-				}
-				_, err = testutil.PollForAck(ctx, osmosis, osmosisHeight, osmosisHeight+20, tx.Packet)
-				return err
-			})
-
-			eg.Go(func() error {
-				tx, err := osmosis.SendIBCTransfer(ctx, osmosisChannel.ChannelID, osmosisUser.KeyName(), ibc.WalletAmount{
-					Address: osmosisDstAddress,
-					Denom:   osmosis.Config().Denom,
-					Amount:  amountToSend,
-				},
-					ibc.TransferOptions{},
-				)
-				if err != nil {
-					return err
-				}
-				if err := tx.Validate(); err != nil {
-					return err
-				}
-				_, err = testutil.PollForAck(ctx, osmosis, osmosisHeight, osmosisHeight+20, tx.Packet)
-				return err
-			})
-
-			require.NoError(t, err)
-			require.NoError(t, eg.Wait())
-
-			feegrantMsgSigners := map[string][]string{} //chain to list of signers
-
-			for len(processor.PathProcMessageCollector) > 0 {
-				select {
-				case curr, ok := <-processor.PathProcMessageCollector:
-					if ok && curr.Error == nil && curr.SuccessfulTx {
-						cProv, cosmProv := curr.DestinationChain.(*cosmos.CosmosProvider)
-						if cosmProv {
-							chain := cProv.PCfg.ChainID
-							feegrantInfo, isFeegrantedChain := feegrantedChains[chain]
-							if isFeegrantedChain && !strings.Contains(cProv.PCfg.KeyDirectory, t.Name()) {
-								//This would indicate that a parallel test is inserting msgs into the queue.
-								//We can safely skip over any messages inserted by other test cases.
-								fmt.Println("Skipping PathProcessorMessageResp from unrelated Parallel test case")
-								continue
-							}
-
-							done := cProv.SetSDKContext()
-
-							hash, err := hex.DecodeString(curr.Response.TxHash)
-							require.Nil(t, err)
-							txResp, err := TxWithRetry(ctx, cProv.ConsensusClient, hash)
-							require.Nil(t, err)
-
-							require.Nil(t, err)
-							dc := cProv.Cdc.TxConfig.TxDecoder()
-							tx, err := dc(txResp.Tx)
-							require.Nil(t, err)
-							builder, err := cProv.Cdc.TxConfig.WrapTxBuilder(tx)
-							require.Nil(t, err)
-							txFinder := builder.(protoTxProvider)
-							fullTx := txFinder.GetProtoTx()
-							isFeegrantedMsg := false
-
-							msgs := ""
-							msgType := ""
-							for _, m := range fullTx.GetMsgs() {
-								msgType = types.MsgTypeURL(m)
-								//We want all IBC transfers (on an open channel/connection) to be feegranted in round robin fashion
-								if msgType == "/ibc.core.channel.v1.MsgRecvPacket" || msgType == "/ibc.core.channel.v1.MsgAcknowledgement" {
-									isFeegrantedMsg = true
-									msgs += msgType + ", "
-								} else {
-									msgs += msgType + ", "
-								}
-							}
-
-							//It's required that TXs be feegranted in a round robin fashion for this chain and message type
-							if isFeegrantedChain && isFeegrantedMsg {
-								fmt.Printf("Msg types: %+v\n", msgs)
-
-								signers, _, err := cProv.Cdc.Marshaler.GetMsgV1Signers(fullTx)
-								require.NoError(t, err)
-
-								require.Equal(t, len(signers), 1)
-								granter := fullTx.FeeGranter(cProv.Cdc.Marshaler)
-
-								//Feegranter for the TX that was signed on chain must be the relayer chain's configured feegranter
-								require.Equal(t, feegrantInfo.granter, string(granter))
-								require.NotEmpty(t, granter)
-
-								for _, msg := range fullTx.GetMsgs() {
-									msgType = types.MsgTypeURL(msg)
-									//We want all IBC transfers (on an open channel/connection) to be feegranted in round robin fashion
-									if msgType == "/ibc.core.channel.v1.MsgRecvPacket" {
-										c := msg.(*chantypes.MsgRecvPacket)
-										appData := c.Packet.GetData()
-										tokenTransfer := &transfertypes.FungibleTokenPacketData{}
-										err := tokenTransfer.Unmarshal(appData)
-										if err == nil {
-											fmt.Printf("%+v\n", tokenTransfer)
-										} else {
-											fmt.Println(string(appData))
-										}
-									}
-								}
-
-								//Grantee for the TX that was signed on chain must be a configured grantee in the relayer's chain feegrants.
-								//In addition, the grantee must be used in round robin fashion
-								//expectedGrantee := nextGrantee(feegrantInfo)
-								actualGrantee := string(signers[0])
-								signerList, ok := feegrantMsgSigners[chain]
-								if ok {
-									signerList = append(signerList, actualGrantee)
-									feegrantMsgSigners[chain] = signerList
-								} else {
-									feegrantMsgSigners[chain] = []string{actualGrantee}
-								}
-								fmt.Printf("Chain: %s, msg type: %s, height: %d, signer: %s, granter: %s\n", chain, msgType, curr.Response.Height, actualGrantee, string(granter))
-							}
-							done()
-						}
-					}
-				default:
-					fmt.Println("Unknown channel message")
-				}
-			}
-
-			for chain, signers := range feegrantMsgSigners {
-				require.Equal(t, chain, gaia.Config().ChainID)
-				signerCountMap := map[string]int{}
-
-				for _, signer := range signers {
-					count, ok := signerCountMap[signer]
-					if ok {
-						signerCountMap[signer] = count + 1
-					} else {
-						signerCountMap[signer] = 1
-					}
-				}
-
-				highestCount := 0
-				for _, count := range signerCountMap {
-					if count > highestCount {
-						highestCount = count
-					}
-				}
-
-				//At least one feegranter must have signed a TX
-				require.GreaterOrEqual(t, highestCount, 1)
-
-				//All of the feegrantees must have signed at least one TX
-				expectedFeegrantInfo := feegrantedChains[chain]
-				require.Equal(t, len(signerCountMap), len(expectedFeegrantInfo.grantees))
-
-				// verify that TXs were signed in a round robin fashion.
-				// no grantee should have signed more TXs than any other grantee (off by one is allowed).
-				for signer, count := range signerCountMap {
-					fmt.Printf("signer %s signed %d feegranted TXs \n", signer, count)
-					require.LessOrEqual(t, highestCount-count, 1)
-				}
-			}
-
-			// Trace IBC Denom
-			gaiaDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(osmosisChannel.PortID, osmosisChannel.ChannelID, gaia.Config().Denom))
-			gaiaIbcDenom := gaiaDenomTrace.IBCDenom()
-
-			osmosisDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(gaiaChannel.PortID, gaiaChannel.ChannelID, osmosis.Config().Denom))
-			osmosisIbcDenom := osmosisDenomTrace.IBCDenom()
-
-			// Test destination wallets have increased funds
-			gaiaIBCBalance, err := osmosis.GetBalance(ctx, gaiaDstAddress, gaiaIbcDenom)
-			require.NoError(t, err)
-			require.True(t, amountToSend.Equal(gaiaIBCBalance))
-
-			osmosisIBCBalance, err := gaia.GetBalance(ctx, osmosisDstAddress, osmosisIbcDenom)
-			require.NoError(t, err)
-			require.True(t, amountToSend.MulRaw(3).Equal(osmosisIBCBalance))
-
-			// Test grantee still has exact amount expected
-			gaiaGranteeIBCBalance, err := gaia.GetBalance(ctx, gaiaGranteeAddr, gaia.Config().Denom)
-			require.NoError(t, err)
-			require.True(t, gaiaGranteeIBCBalance.Equal(sdkmath.ZeroInt()))
-
-			// Test granter has less than they started with, meaning fees came from their account
-			gaiaGranterIBCBalance, err := gaia.GetBalance(ctx, gaiaGranterAddr, gaia.Config().Denom)
-			require.NoError(t, err)
-			require.True(t, gaiaGranterIBCBalance.LT(fundAmount))
-			r.StopRelayer(ctx, eRep)
-		})
-	}
 }
 
 func buildUserUnfunded(

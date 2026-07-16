@@ -5,15 +5,15 @@ import (
 	"testing"
 
 	sdkmath "cosmossdk.io/math"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	interchaintestrelayer "github.com/cosmos/interchaintest/v11/relayer"
+	interchaintestrly "github.com/cosmos/interchaintest/v11/relayer/rly"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	relayerinterchaintest "github.com/cosmos/relayer/v2/interchaintest"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	interchaintestrelayer "github.com/strangelove-ventures/interchaintest/v8/relayer"
-	interchaintestrly "github.com/strangelove-ventures/interchaintest/v8/relayer/rly"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -35,7 +35,7 @@ func TestMultipleChannelsOneConnection(t *testing.T) {
 			Name:        "gaia",
 			ChainName:   "gaia",
 			Version:     "v14.1.0",
-			ChainConfig: ibc.ChainConfig{GasPrices: "0.00atom"},
+			ChainConfig: gaiaChainConfig("v14.1.0", ibc.ChainConfig{GasPrices: "0.00atom"}),
 		},
 		{
 			Name:        "osmosis",
@@ -140,11 +140,11 @@ func TestMultipleChannelsOneConnection(t *testing.T) {
 	require.NoError(t, err)
 
 	// Compose IBC denoms for each channel
-	ibcDenoms := make([]transfertypes.DenomTrace, 3)
+	ibcDenoms := make([]transfertypes.Denom, 3)
 
-	ibcDenoms[0] = transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(channels[0].Counterparty.PortID, channels[0].Counterparty.ChannelID, gaia.Config().Denom))
-	ibcDenoms[1] = transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(channels[1].Counterparty.PortID, channels[1].Counterparty.ChannelID, gaia.Config().Denom))
-	ibcDenoms[2] = transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(channels[2].Counterparty.PortID, channels[2].Counterparty.ChannelID, gaia.Config().Denom))
+	ibcDenoms[0] = transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(channels[0].Counterparty.PortID, channels[0].Counterparty.ChannelID, gaia.Config().Denom))
+	ibcDenoms[1] = transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(channels[1].Counterparty.PortID, channels[1].Counterparty.ChannelID, gaia.Config().Denom))
+	ibcDenoms[2] = transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(channels[2].Counterparty.PortID, channels[2].Counterparty.ChannelID, gaia.Config().Denom))
 
 	// Assert that the transfers are all successful out of the src chain account
 	expectedBal := initBal.Sub(transferAmount.MulRaw(3))

@@ -7,11 +7,11 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	typestx "github.com/cosmos/cosmos-sdk/types/tx"
-	feetypes "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/types"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
 
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	feetypes "github.com/cosmos/relayer/v2/relayer/codecs/ics29"
 	"github.com/cosmos/relayer/v2/relayer/provider"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -146,45 +146,86 @@ func msgTypesField(msgs []provider.RelayerMessage) zap.Field {
 // This uses the fee payer field if set,
 // otherwise falls back to the address of whoever signed the first message.
 func getFeePayer(log *zap.Logger, cdc *codec.ProtoCodec, tx *typestx.Tx) string {
-	payer := tx.AuthInfo.Fee.Payer
-	if payer != "" {
+	if payer := explicitFeePayer(tx); payer != "" {
 		return payer
 	}
+	firstMsg, ok := firstTxMessage(log, tx)
+	if !ok {
+		return ""
+	}
+	if payer, known := knownMessageFeePayer(firstMsg); known {
+		return payer
+	}
+	return derivedMessageFeePayer(log, cdc, firstMsg)
+}
 
-	switch firstMsg := tx.GetMsgs()[0].(type) {
+func explicitFeePayer(tx *typestx.Tx) string {
+	if tx == nil || tx.AuthInfo == nil || tx.AuthInfo.Fee == nil {
+		return ""
+	}
+	return tx.AuthInfo.Fee.Payer
+}
+
+func firstTxMessage(log *zap.Logger, tx *typestx.Tx) (sdk.Msg, bool) {
+	if tx == nil || tx.Body == nil {
+		return nil, false
+	}
+	messages, err := typestx.GetMsgs(tx.Body.Messages, "transaction")
+	if err != nil {
+		log.Info("Could not unpack first msg when attempting to get the fee payer", zap.Error(err))
+		return nil, false
+	}
+	if len(messages) == 0 || messages[0] == nil {
+		return nil, false
+	}
+	return messages[0], true
+}
+
+func knownMessageFeePayer(firstMsg sdk.Msg) (string, bool) {
+	switch firstMsg := firstMsg.(type) {
 	case *transfertypes.MsgTransfer:
 		// There is a possible data race around concurrent map access
 		// in the cosmos sdk when it converts the address from bech32.
 		// We don't need the address conversion; just the sender is all that
 		// GetSigners is doing under the hood anyway.
-		return firstMsg.Sender
+		return firstMsg.Sender, true
 	case *clienttypes.MsgCreateClient:
 		// Without this particular special case, there is a panic in ibc-go
 		// due to the sdk config singleton expecting one bech32 prefix but seeing another.
-		return firstMsg.Signer
+		return firstMsg.Signer, true
 	case *clienttypes.MsgUpdateClient:
 		// Same failure mode as MsgCreateClient.
-		return firstMsg.Signer
+		return firstMsg.Signer, true
 	case *clienttypes.MsgUpgradeClient:
-		return firstMsg.Signer
-	case *clienttypes.MsgSubmitMisbehaviour:
-		// Same failure mode as MsgCreateClient.
-		return firstMsg.Signer
+		return firstMsg.Signer, true
 	case *feetypes.MsgRegisterPayee:
-		return firstMsg.Relayer
+		return firstMsg.Relayer, true
 	case *feetypes.MsgRegisterCounterpartyPayee:
-		return firstMsg.Relayer
+		return firstMsg.Relayer, true
 	case *feetypes.MsgPayPacketFee:
-		return firstMsg.Signer
+		return firstMsg.Signer, true
 	case *feetypes.MsgPayPacketFeeAsync:
-		return firstMsg.PacketFee.RefundAddress
-	default:
-		signers, _, err := cdc.GetMsgV1Signers(firstMsg)
-		if err != nil {
-			log.Info("Could not get signers for msg when attempting to get the fee payer", zap.Error(err))
-			return ""
-		}
-
-		return string(signers[0])
+		return firstMsg.PacketFee.RefundAddress, true
 	}
+	return "", false
+}
+
+func derivedMessageFeePayer(log *zap.Logger, cdc *codec.ProtoCodec, message sdk.Msg) string {
+	if cdc == nil {
+		return ""
+	}
+	signers, _, err := cdc.GetMsgV1Signers(message)
+	if err != nil {
+		log.Info("Could not get signers for msg when attempting to get the fee payer", zap.Error(err))
+		return ""
+	}
+	if len(signers) == 0 {
+		return ""
+	}
+	payer, err := cdc.InterfaceRegistry().SigningContext().AddressCodec().BytesToString(signers[0])
+	if err != nil {
+		log.Info("Could not encode signer when attempting to get the fee payer", zap.Error(err))
+		return ""
+	}
+	return payer
 }

@@ -4,18 +4,22 @@ on:
   pull_request:
   push:
     branches:
-      - master
+      - main
 
 jobs:
   build:
     name: build
     runs-on: ubuntu-latest
     steps:
+      # checkout relayer before setup-go reads .go-version
+      - name: checkout relayer
+        uses: actions/checkout@v4
+
       # Install and setup go
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.21'
+          go-version-file: '.go-version'
 
       # setup gopath
       - name: Set PATH
@@ -23,9 +27,8 @@ jobs:
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
         shell: bash
 
-      # checkout relayer
-      - name: checkout relayer
-        uses: actions/checkout@v3
+      - name: run lint
+        run: make lint
 
       # unit tests
       - name: run unit tests

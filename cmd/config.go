@@ -27,6 +27,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -448,6 +449,9 @@ func (c *Config) ChainsFromPath(path string) (map[string]*relayer.Chain, string,
 	if err != nil {
 		return nil, "", "", err
 	}
+	if err := pth.EnsureClassicRuntime(); err != nil {
+		return nil, "", "", err
+	}
 
 	src, dst := pth.Src.ChainID, pth.Dst.ChainID
 	chains, err := c.Chains.Gets(src, dst)
@@ -553,8 +557,32 @@ func checkPathEndConflict(pathID, direction string, oldPe, newPe *relayer.PathEn
 		oldPe.ConnectionID, newPe.ConnectionID); err != nil {
 		return err
 	}
+	if len(oldPe.MerklePrefix) != 0 && !slices.Equal(oldPe.MerklePrefix, newPe.MerklePrefix) {
+		return fmt.Errorf(
+			"path with ID %s and conflicting %s merkle prefix (%v) already exists",
+			pathID, direction, oldPe.MerklePrefix,
+		)
+	}
 
 	return nil
+}
+
+func checkPathProtocolConflict(pathID string, oldPath, newPath *relayer.Path) error {
+	if oldPath.EffectiveProtocol() == newPath.EffectiveProtocol() {
+		return nil
+	}
+	return fmt.Errorf(
+		"path with ID %s and conflicting protocol (%s) already exists",
+		pathID, oldPath.EffectiveProtocol(),
+	)
+}
+
+func mergedPathUpdate(oldPath, newPath *relayer.Path) relayer.Path {
+	updated := *newPath
+	if updated.Protocol == "" {
+		updated.Protocol = oldPath.Protocol
+	}
+	return updated
 }
 
 // AddPath adds an additional path to the config
@@ -569,6 +597,9 @@ func (c *Config) AddPath(name string, path *relayer.Path) (err error) {
 		return c.Paths.Add(name, path)
 	}
 	// Now check if the update would cause any conflicts.
+	if err = checkPathProtocolConflict(name, oldPath, path); err != nil {
+		return err
+	}
 	if err = checkPathEndConflict(name, "source", oldPath.Src, path.Src); err != nil {
 		return err
 	}
@@ -576,7 +607,8 @@ func (c *Config) AddPath(name string, path *relayer.Path) (err error) {
 		return err
 	}
 	// Update the existing path.
-	*oldPath = *path
+	updated := mergedPathUpdate(oldPath, path)
+	*oldPath = updated
 	return nil
 }
 
@@ -592,18 +624,28 @@ func (c *Config) validateConfig() error {
 		return fmt.Errorf("did you remember to run 'rly config init' error:%w", err)
 	}
 
-	// verify that the channel filter rule is valid for every path in the config
-	for _, p := range c.Paths {
-		if err := p.ValidateChannelFilterRule(); err != nil {
-			return fmt.Errorf("error initializing the relayer config for path %s: %w", p.String(), err)
+	// Verify the structural configuration for every path in the config.
+	for name, p := range c.Paths {
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("error initializing the relayer config for path %s: %w", pathValidationLabel(name, p), err)
 		}
 	}
 
 	return nil
 }
 
+func pathValidationLabel(name string, path *relayer.Path) string {
+	if path == nil || path.Src == nil || path.Dst == nil {
+		return name
+	}
+	return path.String()
+}
+
 // ValidatePath checks that a path is valid
 func (c *Config) ValidatePath(ctx context.Context, stderr io.Writer, p *relayer.Path) (err error) {
+	if err = p.Validate(); err != nil {
+		return err
+	}
 	if err = c.ValidatePathEnd(ctx, stderr, p.Src); err != nil {
 		return fmt.Errorf("chain %s failed path validation: %w", p.Src.ChainID, err)
 	}
@@ -637,23 +679,21 @@ func (c *Config) ValidatePathEnd(ctx context.Context, stderr io.Writer, pe *rela
 		return err
 	}
 
-	if pe.ClientID != "" {
-		if err := c.ValidateClient(ctx, chain, height, pe); err != nil {
-			return err
-		}
-
-		if pe.ConnectionID != "" {
-			if err := c.ValidateConnection(ctx, chain, height, pe); err != nil {
-				return err
-			}
-		}
-	}
-
-	if pe.ClientID == "" && pe.ConnectionID != "" {
+	if pe.ClientID == "" {
 		return fmt.Errorf("clientID is not configured for the connection: %s", pe.ConnectionID)
 	}
 
-	return nil
+	return c.validatePathEndIdentifiers(ctx, chain, height, pe)
+}
+
+func (c *Config) validatePathEndIdentifiers(ctx context.Context, chain *relayer.Chain, height int64, pe *relayer.PathEnd) error {
+	if err := c.ValidateClient(ctx, chain, height, pe); err != nil {
+		return err
+	}
+	if pe.ConnectionID == "" {
+		return nil
+	}
+	return c.ValidateConnection(ctx, chain, height, pe)
 }
 
 // ValidateClient validates client id in provided pathend

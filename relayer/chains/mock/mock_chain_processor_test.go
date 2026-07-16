@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
 	"github.com/cosmos/relayer/v2/relayer"
 	"github.com/cosmos/relayer/v2/relayer/chains/mock"
 	"github.com/cosmos/relayer/v2/relayer/processor"
@@ -54,10 +54,23 @@ func TestMockChainAndPathProcessors(t *testing.T) {
 
 	log := zaptest.NewLogger(t)
 
-	ctx, ctxCancel := context.WithTimeout(context.Background(), time.Second*20)
+	ctx, ctxCancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer ctxCancel()
 
 	metrics := processor.NewPrometheusMetrics()
+	packetObservations := []packetObservation{
+		{mockChainID1, mockChannelKey1, chantypes.EventTypeSendPacket},
+		{mockChainID1, mockChannelKey1, chantypes.EventTypeRecvPacket},
+		{mockChainID1, mockChannelKey1, chantypes.EventTypeAcknowledgePacket},
+		{mockChainID2, mockChannelKey2, chantypes.EventTypeSendPacket},
+		{mockChainID2, mockChannelKey2, chantypes.EventTypeRecvPacket},
+		{mockChainID2, mockChannelKey2, chantypes.EventTypeAcknowledgePacket},
+	}
+	observationsComplete := make(chan bool, 1)
+	go func() {
+		observationsComplete <- waitForPacketObservations(ctx, metrics, mockPathName, packetObservations)
+		ctxCancel()
+	}()
 
 	clientUpdateThresholdTime := 6 * time.Hour
 	flushInterval := 6 * time.Hour
@@ -76,6 +89,7 @@ func TestMockChainAndPathProcessors(t *testing.T) {
 
 	err := eventProcessor.Run(ctx)
 	require.NoError(t, err, "error running event processor")
+	require.True(t, <-observationsComplete, "timed out waiting for all packet event types")
 
 	pathEnd1LeftoverMsgTransfer := pathProcessor.PathEnd1Messages(mockChannelKey1, chantypes.EventTypeSendPacket)
 	pathEnd1LeftoverMsgRecvPacket := pathProcessor.PathEnd1Messages(mockChannelKey1, chantypes.EventTypeRecvPacket)
@@ -132,6 +146,53 @@ func TestMockChainAndPathProcessors(t *testing.T) {
 	require.Greater(t, countChain2EventSend, float64(0))
 	require.Greater(t, countChain2EventRecv, float64(0))
 	require.Greater(t, countChain2EventAck, float64(0))
+}
+
+type packetObservation struct {
+	chainID   string
+	channel   processor.ChannelKey
+	eventType string
+}
+
+func waitForPacketObservations(
+	ctx context.Context,
+	metrics *processor.PrometheusMetrics,
+	pathName string,
+	observations []packetObservation,
+) bool {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if allPacketObservationsRecorded(metrics, pathName, observations) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+func allPacketObservationsRecorded(
+	metrics *processor.PrometheusMetrics,
+	pathName string,
+	observations []packetObservation,
+) bool {
+	for _, observation := range observations {
+		count := testutil.ToFloat64(metrics.PacketObservedCounter.WithLabelValues(
+			pathName,
+			observation.chainID,
+			observation.channel.ChannelID,
+			observation.channel.PortID,
+			observation.eventType,
+		))
+		if count == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // will send cycles of:

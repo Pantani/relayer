@@ -3,7 +3,6 @@ package penumbra
 import (
 	"context"
 	"errors"
-	"google.golang.org/grpc/mem"
 	"reflect"
 	"strconv"
 	"sync"
@@ -22,6 +21,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/encoding/proto"
+	"google.golang.org/grpc/mem"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )

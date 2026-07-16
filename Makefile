@@ -9,6 +9,9 @@ DOCKER := $(shell which docker)
 
 GOPATH := $(shell go env GOPATH)
 GOBIN := $(GOPATH)/bin
+TOOLS_BIN_DIR := $(CURDIR)/.cache/bin
+GOLANGCI_LINT_VERSION := v2.12.2
+GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
 all: lint install
 
@@ -68,6 +71,23 @@ build-osmosis-docker:
 test:
 	@go test -mod=readonly -race ./...
 
+#? complexity: Enforce cyclomatic and cognitive complexity below 10
+complexity:
+	@bash ./scripts/check-complexity.sh
+
+#? interchaintest-contract: Verify workspace and isolated integration-module contracts
+interchaintest-contract:
+	go test -mod=readonly -run '^$$' ./... ./interchaintest/...
+	go build -mod=readonly ./... ./interchaintest/...
+	go test -mod=readonly -race -run '^(TestAddKeyArgs|TestRestoreKeyArgs|TestCreateClientArgs|TestLinkPathArgsOmitsEmptyClientOptions|TestPathUpdateArgs|TestUnsupportedInProcessRelayerFeaturesReturnErrors)$$' ./interchaintest
+	cd interchaintest && GOWORK=off go mod verify
+	cd interchaintest && GOWORK=off go test -mod=readonly -run '^$$' ./...
+	cd interchaintest && GOWORK=off go build -mod=readonly ./...
+	@if cd interchaintest && GOWORK=off go list -deps -f '{{with .Module}}{{.Path}}{{end}}' ./... | grep -Eq '^(cosmossdk.io/(store|log)|github.com/cosmos/ibc-go/v10)$$'; then \
+		echo "interchaintest loads a legacy Store, Log, or IBC-Go v10 module"; \
+		exit 1; \
+	fi
+
 #? interchaintest: Run interchain TestRelayerInProcess tests
 interchaintest:
 	cd interchaintest && go test -race -v -run TestRelayerInProcess .
@@ -117,11 +137,15 @@ coverage:
 	@echo "viewing test coverage..."
 	@go tool cover --html=coverage.out
 
-#? lint: Run linters and gofmt
-lint:
-	@golangci-lint run
-	@find . -name '*.go' -type f -not -path "*.git*" | xargs gofmt -d -s
+#? lint: Run the pinned linters and formatters
+lint: $(GOLANGCI_LINT)
+	@$(GOLANGCI_LINT) run
 	@go mod verify
+
+$(GOLANGCI_LINT):
+	@mkdir -p $(TOOLS_BIN_DIR)
+	@GOBIN=$(TOOLS_BIN_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@mv $(TOOLS_BIN_DIR)/golangci-lint $(GOLANGCI_LINT)
 
 ###############################################################################
 # Chain Code Downloads
@@ -142,10 +166,10 @@ build-gaia:
 	make install &> /dev/null
 	@gaiad version --long
 
-.PHONY: two-chains test test-integration interchaintest install build lint coverage clean
+.PHONY: two-chains test test-integration interchaintest interchaintest-contract install build lint complexity coverage clean
 
 PACKAGE_NAME          := github.com/cosmos/relayer
-GOLANG_CROSS_VERSION  ?= v1.21.5
+GOLANG_CROSS_VERSION  ?= v1.25.9
 
 SYSROOT_DIR     ?= sysroots
 SYSROOT_ARCHIVE ?= sysroots.tar.bz2

@@ -11,8 +11,9 @@ import (
 	"testing"
 
 	dockertypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/pkg/archive"
+	imageapi "github.com/docker/docker/api/types/image"
 	"github.com/google/uuid"
+	"github.com/moby/go-archive"
 	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 )
@@ -70,7 +71,7 @@ func destroyRelayerImage(t *testing.T, image string) {
 	require.NoError(t, err, "error building docker client")
 
 	// Remove the Docker image using the provided tag (uniquestr)
-	_, err = cli.ImageRemove(context.Background(), image, dockertypes.ImageRemoveOptions{
+	_, err = cli.ImageRemove(context.Background(), image, imageapi.RemoveOptions{
 		Force:         true, // Force remove the image
 		PruneChildren: true, // Remove all child images
 	})

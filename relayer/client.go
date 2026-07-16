@@ -2,15 +2,14 @@ package relayer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/avast/retry-go/v4"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
-	tmclient "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
+	tmclient "github.com/cosmos/ibc-go/v11/modules/light-clients/07-tendermint"
 	"github.com/cosmos/relayer/v2/relayer/provider"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -296,6 +295,10 @@ func MsgUpdateClient(
 	})); err != nil {
 		return nil, err
 	}
+	dstClientHeight, err := provider.ClientStateLatestHeight(dstClientState)
+	if err != nil {
+		return nil, err
+	}
 
 	var srcHeader, dstTrustedHeader provider.IBCHeader
 
@@ -330,16 +333,16 @@ func MsgUpdateClient(
 				"Query IBC header",
 				zap.String("chain_id", src.ChainID()),
 				zap.String("client_id", src.ClientID()),
-				zap.Int64("height", int64(dstClientState.GetLatestHeight().GetRevisionHeight())+1),
+				zap.Int64("height", int64(dstClientHeight.GetRevisionHeight())+1),
 			)
-			dstTrustedHeader, err = src.ChainProvider.QueryIBCHeader(egCtx, int64(dstClientState.GetLatestHeight().GetRevisionHeight())+1)
+			dstTrustedHeader, err = src.ChainProvider.QueryIBCHeader(egCtx, int64(dstClientHeight.GetRevisionHeight())+1)
 			return err
 		}, retry.Context(egCtx), RtyAtt, RtyDel, RtyErr, retry.OnRetry(func(n uint, err error) {
 			src.log.Error(
 				"Failed to query IBC header when building update client message",
 				zap.String("chain_id", src.ChainID()),
 				zap.String("client_id", src.ClientID()),
-				zap.Int64("height", int64(dstClientState.GetLatestHeight().GetRevisionHeight())+1),
+				zap.Int64("height", int64(dstClientHeight.GetRevisionHeight())+1),
 				zap.Uint("attempt", n+1),
 				zap.Uint("max_attempts", RtyAttNum),
 				zap.Error(err),
@@ -354,7 +357,7 @@ func MsgUpdateClient(
 	var updateHeader ibcexported.ClientMessage
 	if err := retry.Do(func() error {
 		var err error
-		updateHeader, err = src.ChainProvider.MsgUpdateClientHeader(srcHeader, dstClientState.GetLatestHeight().(clienttypes.Height), dstTrustedHeader)
+		updateHeader, err = src.ChainProvider.MsgUpdateClientHeader(srcHeader, dstClientHeight, dstTrustedHeader)
 		return err
 	}, retry.Context(ctx), RtyAtt, RtyDel, RtyErr, retry.OnRetry(func(n uint, err error) {
 		src.log.Info(
@@ -552,20 +555,8 @@ func findMatchingClient(ctx context.Context, src, dst *Chain, newClientState ibc
 	return "", nil
 }
 
-// parseClientIDFromEvents parses events emitted from a MsgCreateClient and returns the
-// client identifier.
 func parseClientIDFromEvents(events []provider.RelayerEvent) (string, error) {
-	for _, event := range events {
-		if event.EventType == clienttypes.EventTypeCreateClient {
-			for attributeKey, attributeValue := range event.Attributes {
-				if attributeKey == clienttypes.AttributeKeyClientID {
-					return attributeValue, nil
-				}
-			}
-		}
-	}
-
-	return "", errors.New("client identifier event attribute not found")
+	return ParseClientIDFromEvents(events)
 }
 
 type ClientStateInfo struct {

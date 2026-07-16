@@ -7,16 +7,16 @@ import (
 	"testing"
 
 	sdkmath "cosmossdk.io/math"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	icrelayer "github.com/cosmos/interchaintest/v11/relayer"
+	"github.com/cosmos/interchaintest/v11/relayer/rly"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	relayertest "github.com/cosmos/relayer/v2/interchaintest"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	icrelayer "github.com/strangelove-ventures/interchaintest/v8/relayer"
-	"github.com/strangelove-ventures/interchaintest/v8/relayer/rly"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -39,9 +39,9 @@ func TestBackupRpcs(t *testing.T) {
 			NumValidators: &numVals,
 			NumFullNodes:  &numFullNodes,
 
-			ChainConfig: ibc.ChainConfig{
+			ChainConfig: gaiaChainConfig("v7.0.0", ibc.ChainConfig{
 				GasPrices: "0.0uatom",
-			},
+			}),
 		},
 		{
 			Name:          "osmosis",
@@ -206,7 +206,7 @@ func TestBackupRpcs(t *testing.T) {
 		channel.Counterparty.ChannelID,
 		chainA.Config().Denom,
 	)
-	trace := transfertypes.ParseDenomTrace(denom)
+	trace := transfertypes.ExtractDenomFromPath(denom)
 
 	// validate user balances on both chains
 	userABal, err = chainA.GetBalance(ctx, userA.FormattedAddress(), chainA.Config().Denom)

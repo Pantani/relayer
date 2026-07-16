@@ -12,7 +12,6 @@ import (
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/secp256k1"
 )
 
 const (
@@ -197,5 +196,5 @@ func (pubKey PubKey) VerifySignature(msg []byte, sig []byte) bool {
 	}
 
 	// the signature needs to be in [R || S] format when provided to VerifySignature
-	return secp256k1.VerifySignature(pubKey.Key, ethcrypto.Keccak256Hash(msg).Bytes(), sig)
+	return ethcrypto.VerifySignature(pubKey.Key, ethcrypto.Keccak256Hash(msg).Bytes(), sig)
 }

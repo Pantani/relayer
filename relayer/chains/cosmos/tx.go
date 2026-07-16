@@ -15,7 +15,6 @@ import (
 
 	sdkerrors "cosmossdk.io/errors"
 	sdkmath "cosmossdk.io/math"
-	"cosmossdk.io/store/rootmulti"
 	"github.com/avast/retry-go/v4"
 	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/cometbft/cometbft/libs/bytes"
@@ -27,24 +26,22 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	"github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
-	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	"github.com/cosmos/cosmos-sdk/store/v2/rootmulti"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	legacyerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
-	feetypes "github.com/cosmos/ibc-go/v8/modules/apps/29-fee/types"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	conntypes "github.com/cosmos/ibc-go/v8/modules/core/03-connection/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
-	commitmenttypes "github.com/cosmos/ibc-go/v8/modules/core/23-commitment/types"
-	host "github.com/cosmos/ibc-go/v8/modules/core/24-host"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
-	tmclient "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
-	localhost "github.com/cosmos/ibc-go/v8/modules/light-clients/09-localhost"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	conntypes "github.com/cosmos/ibc-go/v11/modules/core/03-connection/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	commitmenttypes "github.com/cosmos/ibc-go/v11/modules/core/23-commitment/types"
+	host "github.com/cosmos/ibc-go/v11/modules/core/24-host"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
+	tmclient "github.com/cosmos/ibc-go/v11/modules/light-clients/07-tendermint"
 	"github.com/cosmos/relayer/v2/cclient"
 	strideicqtypes "github.com/cosmos/relayer/v2/relayer/chains/cosmos/stride"
+	feetypes "github.com/cosmos/relayer/v2/relayer/codecs/ics29"
 	"github.com/cosmos/relayer/v2/relayer/ethermint"
 	"github.com/cosmos/relayer/v2/relayer/provider"
 	"go.uber.org/zap"
@@ -1061,6 +1058,10 @@ func (cc *CosmosProvider) MsgConnectionOpenTry(msgOpenInit provider.ConnectionIn
 	if err != nil {
 		return nil, err
 	}
+	consensusHeight, err := provider.ClientStateLatestHeight(proof.ClientState)
+	if err != nil {
+		return nil, err
+	}
 
 	counterparty := conntypes.Counterparty{
 		ClientId:     msgOpenInit.ClientID,
@@ -1079,7 +1080,7 @@ func (cc *CosmosProvider) MsgConnectionOpenTry(msgOpenInit provider.ConnectionIn
 		ProofInit:            proof.ConnectionStateProof,
 		ProofClient:          proof.ClientStateProof,
 		ProofConsensus:       proof.ConsensusStateProof,
-		ConsensusHeight:      proof.ClientState.GetLatestHeight().(clienttypes.Height),
+		ConsensusHeight:      consensusHeight,
 		Signer:               signer,
 	}
 
@@ -1098,6 +1099,10 @@ func (cc *CosmosProvider) MsgConnectionOpenAck(msgOpenTry provider.ConnectionInf
 	if err != nil {
 		return nil, err
 	}
+	consensusHeight, err := provider.ClientStateLatestHeight(proof.ClientState)
+	if err != nil {
+		return nil, err
+	}
 
 	msg := &conntypes.MsgConnectionOpenAck{
 		ConnectionId:             msgOpenTry.CounterpartyConnID,
@@ -1111,7 +1116,7 @@ func (cc *CosmosProvider) MsgConnectionOpenAck(msgOpenTry provider.ConnectionInf
 		ProofTry:        proof.ConnectionStateProof,
 		ProofClient:     proof.ClientStateProof,
 		ProofConsensus:  proof.ConsensusStateProof,
-		ConsensusHeight: proof.ClientState.GetLatestHeight().(clienttypes.Height),
+		ConsensusHeight: consensusHeight,
 		Signer:          signer,
 	}
 
@@ -1376,7 +1381,7 @@ func (cc *CosmosProvider) MsgSubmitMisbehaviour(clientID string, misbehaviour ib
 		return nil, err
 	}
 
-	msg, err := clienttypes.NewMsgSubmitMisbehaviour(clientID, misbehaviour, signer)
+	msg, err := clienttypes.NewMsgUpdateClient(clientID, misbehaviour, signer)
 	if err != nil {
 		return nil, err
 	}
@@ -1510,7 +1515,10 @@ func (cc *CosmosProvider) InjectTrustedFields(ctx context.Context, header ibcexp
 	}
 
 	// inject TrustedHeight as latest height stored on dst client
-	h.TrustedHeight = cs.GetLatestHeight().(clienttypes.Height)
+	h.TrustedHeight, err = provider.ClientStateLatestHeight(cs)
+	if err != nil {
+		return nil, err
+	}
 
 	// NOTE: We need to get validators from the source chain at height: trustedHeight+1
 	// since the last trusted validators for a header at height h is the NextValidators
@@ -1561,28 +1569,6 @@ func (cc *CosmosProvider) queryTMClientState(ctx context.Context, srch int64, sr
 	if !ok {
 		return &tmclient.ClientState{},
 			fmt.Errorf("error when casting exported clientstate to tendermint type, got(%T)", clientStateExported)
-	}
-
-	return clientState, nil
-}
-
-// queryLocalhostClientState retrieves the latest consensus state for a client in state at a given height
-// and unpacks/cast it to localhost client state.
-func (cc *CosmosProvider) queryLocalhostClientState(ctx context.Context, srch int64) (*localhost.ClientState, error) {
-	clientStateRes, err := cc.QueryClientStateResponse(ctx, srch, ibcexported.LocalhostClientID)
-	if err != nil {
-		return &localhost.ClientState{}, err
-	}
-
-	clientStateExported, err := clienttypes.UnpackClientState(clientStateRes.ClientState)
-	if err != nil {
-		return &localhost.ClientState{}, err
-	}
-
-	clientState, ok := clientStateExported.(*localhost.ClientState)
-	if !ok {
-		return &localhost.ClientState{},
-			fmt.Errorf("error when casting exported clientstate to localhost client type, got(%T)", clientStateExported)
 	}
 
 	return clientState, nil
@@ -1905,9 +1891,7 @@ func BuildSimTx(info *keyring.Record, txf tx.Factory, msgs ...sdk.Msg) ([]byte, 
 		return nil, err
 	}
 
-	var pk cryptotypes.PubKey = &secp256k1.PubKey{} // use default public key type
-
-	pk, err = info.GetPubKey()
+	pk, err := info.GetPubKey()
 	if err != nil {
 		return nil, err
 	}

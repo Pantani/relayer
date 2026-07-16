@@ -9,13 +9,15 @@ import (
 	"github.com/cometbft/cometbft/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/gogoproto/proto"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	conntypes "github.com/cosmos/ibc-go/v8/modules/core/03-connection/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
-	commitmenttypes "github.com/cosmos/ibc-go/v8/modules/core/23-commitment/types"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
-	tendermint "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	conntypes "github.com/cosmos/ibc-go/v11/modules/core/03-connection/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	commitmenttypes "github.com/cosmos/ibc-go/v11/modules/core/23-commitment/types"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
+	solomachine "github.com/cosmos/ibc-go/v11/modules/light-clients/06-solomachine"
+	tendermint "github.com/cosmos/ibc-go/v11/modules/light-clients/07-tendermint"
+	attestations "github.com/cosmos/ibc-go/v11/modules/light-clients/attestations"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -70,6 +72,28 @@ type ClientState struct {
 	TrustingPeriod  time.Duration
 	ConsensusTime   time.Time
 	Header          []byte
+}
+
+// ClientStateLatestHeight extracts the height encoded by the client-state
+// implementations supported by ibc-go v11. Localhost is stateless in v11 and
+// therefore must derive its height from the observed local block instead.
+func ClientStateLatestHeight(state ibcexported.ClientState) (clienttypes.Height, error) {
+	switch state := state.(type) {
+	case *tendermint.ClientState:
+		if state != nil {
+			return state.LatestHeight, nil
+		}
+	case *solomachine.ClientState:
+		if state != nil {
+			return clienttypes.NewHeight(0, state.Sequence), nil
+		}
+	case *attestations.ClientState:
+		if state != nil {
+			return clienttypes.NewHeight(0, state.LatestHeight), nil
+		}
+	}
+
+	return clienttypes.Height{}, fmt.Errorf("unsupported IBC client state %T", state)
 }
 
 // ClientTrustedState holds the current state of a client from the perspective of both involved chains,
@@ -467,8 +491,8 @@ type QueryProvider interface {
 	QueryPacketReceipt(ctx context.Context, height int64, channelid, portid string, seq uint64) (recRes *chantypes.QueryPacketReceiptResponse, err error)
 
 	// ics 20 - transfer
-	QueryDenomTrace(ctx context.Context, denom string) (*transfertypes.DenomTrace, error)
-	QueryDenomTraces(ctx context.Context, offset, limit uint64, height int64) ([]transfertypes.DenomTrace, error)
+	QueryDenomTrace(ctx context.Context, denom string) (*transfertypes.Denom, error)
+	QueryDenomTraces(ctx context.Context, offset, limit uint64, height int64) ([]transfertypes.Denom, error)
 	QueryDenomHash(ctx context.Context, trace string) (string, error)
 }
 

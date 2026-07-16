@@ -5,15 +5,15 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	interchaintestrelayer "github.com/cosmos/interchaintest/v11/relayer"
+	interchaintestrly "github.com/cosmos/interchaintest/v11/relayer/rly"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	"github.com/cosmos/relayer/v2/cmd"
 	relayerinterchaintest "github.com/cosmos/relayer/v2/interchaintest"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	interchaintestrelayer "github.com/strangelove-ventures/interchaintest/v8/relayer"
-	interchaintestrly "github.com/strangelove-ventures/interchaintest/v8/relayer/rly"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -41,9 +41,10 @@ func TestClientOverrideFlag(t *testing.T) {
 	// Define chains involved in test
 	cf := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), []*interchaintest.ChainSpec{
 		{
-			Name:      "gaia",
-			ChainName: "gaia",
-			Version:   "v14.1.0",
+			Name:        "gaia",
+			ChainName:   "gaia",
+			Version:     "v14.1.0",
+			ChainConfig: gaiaChainConfig("v14.1.0", ibc.ChainConfig{}),
 		},
 		{
 			Name:      "osmosis",

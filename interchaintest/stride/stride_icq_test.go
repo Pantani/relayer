@@ -7,15 +7,15 @@ import (
 
 	sdkmath "cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/types"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	relayerinterchaintest "github.com/cosmos/relayer/v2/interchaintest"
 	rlystride "github.com/cosmos/relayer/v2/relayer/chains/cosmos/stride"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
@@ -53,7 +53,7 @@ func TestScenarioStrideICAandICQ(t *testing.T) {
 				Images: []ibc.DockerImage{{
 					Repository: "ghcr.io/strangelove-ventures/heighliner/stride",
 					Version:    "andrew-test_admin_v5.1.1",
-					UidGid:     "1025:1025",
+					UIDGID:     "1025:1025",
 				}},
 				Bin:            "strided",
 				Bech32Prefix:   "stride",
@@ -71,6 +71,7 @@ func TestScenarioStrideICAandICQ(t *testing.T) {
 			NumValidators: &nv,
 			NumFullNodes:  &nf,
 			ChainConfig: ibc.ChainConfig{
+				Images:         []ibc.DockerImage{ibc.NewDockerImage("ghcr.io/strangelove-ventures/heighliner/gaia", "v8.0.0", "1025:1025")},
 				ModifyGenesis:  ModifyGenesisStrideCounterparty(),
 				TrustingPeriod: TrustingPeriod,
 			},
@@ -183,7 +184,7 @@ func TestScenarioStrideICAandICQ(t *testing.T) {
 
 	logger.Info("TestScenarioStrideICAandICQ [7]")
 
-	atomIBCDenom := transfertypes.ParseDenomTrace(
+	atomIBCDenom := transfertypes.ExtractDenomFromPath(
 		transfertypes.GetPrefixedDenom(
 			gaiaChans[0].Counterparty.PortID,
 			gaiaChans[0].Counterparty.ChannelID,

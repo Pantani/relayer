@@ -6,10 +6,24 @@ import (
 	"regexp"
 
 	sdkmath "cosmossdk.io/math"
+	"github.com/cosmos/gogoproto/proto"
 	"go.uber.org/zap"
 )
 
-const queryPath = "/osmosis.txfees.v1beta1.Query/GetEipBaseFee"
+const baseFeeQueryPath = "/osmosis.txfees.v1beta1.Query/GetEipBaseFee"
+
+var gasPriceDenomPattern = regexp.MustCompile(`^0\.\d+([a-zA-Z]+)$`)
+
+// queryEIPBaseFeeResponse mirrors the stable wire contract of the Osmosis txfees query without
+// importing the full Osmosis application module into the relayer. The custom LegacyDec field is
+// encoded as its scaled integer text, so it is decoded into a string before LegacyDec.Unmarshal.
+type queryEIPBaseFeeResponse struct {
+	BaseFee string `protobuf:"bytes,1,opt,name=base_fee,json=baseFee,proto3" json:"base_fee,omitempty"`
+}
+
+func (r *queryEIPBaseFeeResponse) Reset()         { *r = queryEIPBaseFeeResponse{} }
+func (r *queryEIPBaseFeeResponse) String() string { return proto.CompactTextString(r) }
+func (*queryEIPBaseFeeResponse) ProtoMessage()    {}
 
 // DynamicFee queries the dynamic gas price base fee and returns a string with the base fee and token denom concatenated.
 // If the chain does not have dynamic fees enabled in the config, nothing happens and an empty string is always returned.
@@ -31,41 +45,42 @@ func (cc *CosmosProvider) DynamicFee(ctx context.Context) string {
 // QueryBaseFee attempts to make an ABCI query to retrieve the base fee on chains using the Osmosis EIP-1559 implementation.
 // This is currently hardcoded to only work on Osmosis.
 func (cc *CosmosProvider) QueryBaseFee(ctx context.Context) (string, error) {
-	resp, err := cc.ConsensusClient.GetABCIQuery(ctx, queryPath, nil)
-	if err != nil || resp.Code != 0 {
-		return "", err
-	}
-
-	decFee, err := sdkmath.LegacyNewDecFromStr(resp.ValueCleaned())
+	resp, err := cc.ConsensusClient.GetABCIQuery(ctx, baseFeeQueryPath, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("query Osmosis EIP-1559 base fee: %w", err)
+	}
+	if resp == nil {
+		return "", fmt.Errorf("query Osmosis EIP-1559 base fee: empty ABCI response")
+	}
+	if resp.Code != 0 {
+		return "", fmt.Errorf("query Osmosis EIP-1559 base fee: ABCI code %d", resp.Code)
 	}
 
-	baseFee, err := decFee.Float64()
-	if err != nil {
-		return "", err
+	var queryResponse queryEIPBaseFeeResponse
+	if err := proto.Unmarshal(resp.Value, &queryResponse); err != nil {
+		return "", fmt.Errorf("decode Osmosis EIP-1559 base fee response: %w", err)
+	}
+	if queryResponse.BaseFee == "" {
+		return "", fmt.Errorf("decode Osmosis EIP-1559 base fee response: missing base_fee")
 	}
 
-	// The current EIP-1559 implementation returns an integer and does not return any value that tells us how many
-	// decimal places we need to account for.
-	//
-	// This may be problematic because we are assuming that we always need to move the decimal 18 places.
-	fee := baseFee / 1e18
+	var fee sdkmath.LegacyDec
+	if err := fee.Unmarshal([]byte(queryResponse.BaseFee)); err != nil {
+		return "", fmt.Errorf("decode Osmosis EIP-1559 base fee value: %w", err)
+	}
 
 	denom, err := parseTokenDenom(cc.PCfg.GasPrices)
 	if err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("%f%s", fee, denom), nil
+	return fee.String() + denom, nil
 }
 
 // parseTokenDenom takes a string in the format numericGasPrice + tokenDenom (e.g. 0.0025uosmo),
 // and parses the tokenDenom portion (e.g. uosmo) before returning just the token denom.
 func parseTokenDenom(gasPrice string) (string, error) {
-	regex := regexp.MustCompile(`^0\.\d+([a-zA-Z]+)$`)
-
-	matches := regex.FindStringSubmatch(gasPrice)
+	matches := gasPriceDenomPattern.FindStringSubmatch(gasPrice)
 
 	if len(matches) != 2 {
 		return "", fmt.Errorf("failed to parse token denom from string %s", gasPrice)

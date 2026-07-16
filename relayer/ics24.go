@@ -3,7 +3,7 @@ package relayer
 import (
 	"fmt"
 
-	host "github.com/cosmos/ibc-go/v8/modules/core/24-host"
+	host "github.com/cosmos/ibc-go/v11/modules/core/24-host"
 )
 
 // Vclient validates the client identifier in the path
@@ -55,7 +55,7 @@ func (pe *PathEnd) ValidateFull() error {
 			return err
 		}
 	}
-	return nil
+	return pe.MerklePrefix.Validate()
 }
 
 // ErrPathNotSet returns information what identifiers are needed to relay

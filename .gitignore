@@ -18,6 +18,13 @@ _test/keys/
 .vscode/
 dist/
 .release-env
+.cache/
+
+# Local development and agent artifacts.
+/.claude/
+/CLAUDE.md
+/_workspace/
+/_worktree/
 
 # Don't commit the vendor directory if anyone runs 'go mod vendor'.
 /vendor

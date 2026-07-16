@@ -1,61 +1,24 @@
+version: "2"
+
+run:
+  go: "1.25.9"
+
 linters:
+  default: none
   enable:
     - bodyclose
-    - deadcode
-    - depguard
-    - dogsled
-    # - errcheck
-    # - funlen
-    # - gochecknoglobals
-    # - gochecknoinits
-    - goconst
-    - gocritic
-    # - gocyclo
-    # - godox
-    - gofmt
-    - goimports
-    - golint
-    - gosec
-    - gosimple
     - govet
     - ineffassign
-    - interfacer
-    - lll
-    - misspell
-    # - maligned
-    - nakedret
-    - prealloc
-    - scopelint
-    - staticcheck
-    - structcheck
-    - stylecheck
-    - typecheck
-    - unconvert
-    # - unparam
-    - unused
-    - varcheck
-    # - whitespace
-    # - wsl
-    # - gocognit
     - nolintlint
+  settings:
+    govet:
+      disable:
+        - inline
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 issues:
-  exclude-rules:
-    - linters:
-        - lll
-      source: "https://"
   max-same-issues: 50
-
-linters-settings:
-  dogsled:
-    max-blank-identifiers: 3
-  maligned:
-    suggest-new: true
-  # govet:
-  #   check-shadowing: true
-  golint:
-    min-confidence: 0
-  #   gocyclo:
-  #     min-complexity: 10
-  #   misspell:
-  #     locale: US

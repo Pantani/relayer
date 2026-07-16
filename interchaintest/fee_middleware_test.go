@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	sdkmath "cosmossdk.io/math"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	relayertest "github.com/cosmos/relayer/v2/interchaintest"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -200,7 +200,7 @@ func TestRelayerFeeMiddleware(t *testing.T) {
 
 	// Assigning denom
 	chainATokenDenom := transfertypes.GetPrefixedDenom(channelA.PortID, channelA.ChannelID, chainA.Config().Denom)
-	chainADenomTrace := transfertypes.ParseDenomTrace(chainATokenDenom)
+	chainADenomTrace := transfertypes.ExtractDenomFromPath(chainATokenDenom)
 
 	// Get balances after the fees
 	expectedBal := userAOrigBal.Sub(txAmount.AddRaw(1000))
