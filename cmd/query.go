@@ -9,6 +9,8 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/types/query"
+	"github.com/cosmos/gogoproto/proto"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
 	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
 	"github.com/cosmos/relayer/v2/relayer"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos"
@@ -267,63 +269,67 @@ $ %s query balance ibc-0 testkey`,
 			appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chain, ok := a.config.Chains[args[0]]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			showDenoms, err := cmd.Flags().GetBool(flagIBCDenoms)
-			if err != nil {
-				return err
-			}
-
-			keyName := chain.ChainProvider.Key()
-			if len(args) == 2 {
-				keyName = args[1]
-			}
-
-			if !chain.ChainProvider.KeyExists(keyName) {
-				return errKeyDoesntExist(keyName)
-			}
-
-			addr, err := chain.ChainProvider.ShowAddress(keyName)
-			if err != nil {
-				return err
-			}
-
-			coins, err := relayer.QueryBalance(cmd.Context(), chain, addr, showDenoms)
-			if err != nil {
-				return err
-			}
-
-			// Create a map to hold the data
-			data := map[string]string{
-				"address": addr,
-				"balance": coins.String(),
-			}
-
-			// Convert the map to a JSON string
-			jsonOutput, err := json.Marshal(data)
-			if err != nil {
-				return err
-			}
-
-			output, _ := cmd.Flags().GetString(flagOutput)
-			switch output {
-			case formatJson:
-				fmt.Fprint(cmd.OutOrStdout(), string(jsonOutput))
-			case formatLegacy:
-				fallthrough
-			default:
-				fmt.Fprintf(cmd.OutOrStdout(), "address {%s} balance {%s} \n", addr, coins)
-			}
-			return nil
+			return runQueryBalance(a, cmd, args)
 		},
 	}
 
 	cmd = addOutputFlag(a.viper, cmd)
 	cmd = ibcDenomFlags(a.viper, cmd)
 	return cmd
+}
+
+func runQueryBalance(a *appState, cmd *cobra.Command, args []string) error {
+	chain, ok := a.config.Chains[args[0]]
+	if !ok {
+		return errChainNotFound(args[0])
+	}
+
+	showDenoms, err := cmd.Flags().GetBool(flagIBCDenoms)
+	if err != nil {
+		return err
+	}
+
+	keyName := chain.ChainProvider.Key()
+	if len(args) == 2 {
+		keyName = args[1]
+	}
+
+	if !chain.ChainProvider.KeyExists(keyName) {
+		return errKeyDoesntExist(keyName)
+	}
+
+	addr, err := chain.ChainProvider.ShowAddress(keyName)
+	if err != nil {
+		return err
+	}
+
+	coins, err := relayer.QueryBalance(cmd.Context(), chain, addr, showDenoms)
+	if err != nil {
+		return err
+	}
+
+	jsonOutput, err := json.Marshal(map[string]string{
+		"address": addr,
+		"balance": coins.String(),
+	})
+	if err != nil {
+		return err
+	}
+
+	printQueryBalance(cmd, addr, coins.String(), jsonOutput)
+	return nil
+}
+
+func printQueryBalance(cmd *cobra.Command, addr, balance string, jsonOutput []byte) {
+	output, _ := cmd.Flags().GetString(flagOutput)
+	switch output {
+	case formatJson:
+		fmt.Fprint(cmd.OutOrStdout(), string(jsonOutput))
+	case formatLegacy:
+		fallthrough
+	default:
+		fmt.Fprintf(cmd.OutOrStdout(), "address {%s} balance {%s} \n", addr, balance)
+	}
 }
 
 func queryBalancesCmd(a *appState) *cobra.Command {
@@ -337,57 +343,7 @@ $ %s query balances ibc-0 ibc-1 --key-name=test`,
 			appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			keyName, _ := cmd.Flags().GetString(flagKeyName)
-
-			data := map[string]string{}
-			for _, arg := range args {
-				chain, ok := a.config.Chains[arg]
-				if !ok {
-					return errChainNotFound(args[0])
-				}
-
-				chainKey := keyName
-				if chainKey == "" {
-					chainKey = chain.ChainProvider.Key()
-				}
-
-				showDenoms, err := cmd.Flags().GetBool(flagIBCDenoms)
-				if err != nil {
-					return err
-				}
-
-				if !chain.ChainProvider.KeyExists(chainKey) {
-					return errKeyDoesntExist(chainKey)
-				}
-				addr, err := chain.ChainProvider.ShowAddress(chainKey)
-				if err != nil {
-					return err
-				}
-
-				coins, err := relayer.QueryBalance(cmd.Context(), chain, addr, showDenoms)
-				if err != nil {
-					return err
-				}
-
-				data[addr] = coins.String()
-			}
-			jsonOutput, err := json.Marshal(data)
-			if err != nil {
-				return err
-			}
-
-			output, _ := cmd.Flags().GetString(flagOutput)
-			switch output {
-			case formatJson:
-				fmt.Fprint(cmd.OutOrStdout(), string(jsonOutput))
-			case formatLegacy:
-				fallthrough
-			default:
-				for addr, balance := range data {
-					fmt.Fprintf(cmd.OutOrStdout(), "address {%s} balance {%s} \n", addr, balance)
-				}
-			}
-			return nil
+			return runQueryBalances(a, cmd, args)
 		},
 	}
 
@@ -395,6 +351,75 @@ $ %s query balances ibc-0 ibc-1 --key-name=test`,
 	cmd = ibcDenomFlags(a.viper, cmd)
 	cmd = keyNameFlag(a.viper, cmd)
 	return cmd
+}
+
+func runQueryBalances(a *appState, cmd *cobra.Command, args []string) error {
+	keyName, _ := cmd.Flags().GetString(flagKeyName)
+	data := map[string]string{}
+	for _, arg := range args {
+		addr, balance, err := queryBalanceEntry(a, cmd, arg, args[0], keyName)
+		if err != nil {
+			return err
+		}
+		data[addr] = balance
+	}
+
+	jsonOutput, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	printQueryBalances(cmd, data, jsonOutput)
+	return nil
+}
+
+func queryBalanceEntry(
+	a *appState,
+	cmd *cobra.Command,
+	chainName,
+	missingChainName,
+	keyName string,
+) (string, string, error) {
+	chain, ok := a.config.Chains[chainName]
+	if !ok {
+		return "", "", errChainNotFound(missingChainName)
+	}
+
+	chainKey := keyName
+	if chainKey == "" {
+		chainKey = chain.ChainProvider.Key()
+	}
+
+	showDenoms, err := cmd.Flags().GetBool(flagIBCDenoms)
+	if err != nil {
+		return "", "", err
+	}
+	if !chain.ChainProvider.KeyExists(chainKey) {
+		return "", "", errKeyDoesntExist(chainKey)
+	}
+
+	addr, err := chain.ChainProvider.ShowAddress(chainKey)
+	if err != nil {
+		return "", "", err
+	}
+	coins, err := relayer.QueryBalance(cmd.Context(), chain, addr, showDenoms)
+	if err != nil {
+		return "", "", err
+	}
+	return addr, coins.String(), nil
+}
+
+func printQueryBalances(cmd *cobra.Command, data map[string]string, jsonOutput []byte) {
+	output, _ := cmd.Flags().GetString(flagOutput)
+	switch output {
+	case formatJson:
+		fmt.Fprint(cmd.OutOrStdout(), string(jsonOutput))
+	case formatLegacy:
+		fallthrough
+	default:
+		for addr, balance := range data {
+			fmt.Fprintf(cmd.OutOrStdout(), "address {%s} balance {%s} \n", addr, balance)
+		}
+	}
 }
 
 func queryHeaderCmd(a *appState) *cobra.Command {
@@ -408,55 +433,57 @@ $ %s query header ibc-0 1400`,
 			appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chain, ok := a.config.Chains[args[0]]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			var height int64
-			switch len(args) {
-			case 1:
-				var err error
-				height, err = chain.ChainProvider.QueryLatestHeight(cmd.Context())
-				if err != nil {
-					return err
-				}
-
-			case 2:
-				var err error
-				height, err = strconv.ParseInt(args[1], 10, 64)
-				if err != nil {
-					return err
-				}
-			}
-
-			header, err := chain.ChainProvider.QueryIBCHeader(cmd.Context(), height)
-			if err != nil {
-				return err
-			}
-
-			s, err := json.Marshal(header)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Failed to marshal header: %v\n", err)
-				return err
-			}
-
-			output, _ := cmd.Flags().GetString(flagOutput)
-			switch output {
-			case formatJson:
-				fmt.Fprintln(cmd.OutOrStdout(), string(s))
-			case formatLegacy:
-				fallthrough
-			default:
-				fmt.Fprintln(cmd.OutOrStdout(), s)
-			}
-
-			return nil
+			return runQueryHeader(a, cmd, args)
 		},
 	}
 
 	cmd = addOutputFlag(a.viper, cmd)
 	return cmd
+}
+
+func runQueryHeader(a *appState, cmd *cobra.Command, args []string) error {
+	chain, ok := a.config.Chains[args[0]]
+	if !ok {
+		return errChainNotFound(args[0])
+	}
+	height, err := queryHeaderHeight(cmd, chain, args)
+	if err != nil {
+		return err
+	}
+	header, err := chain.ChainProvider.QueryIBCHeader(cmd.Context(), height)
+	if err != nil {
+		return err
+	}
+	s, err := json.Marshal(header)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Failed to marshal header: %v\n", err)
+		return err
+	}
+	printQueryHeader(cmd, s)
+	return nil
+}
+
+func queryHeaderHeight(cmd *cobra.Command, chain *relayer.Chain, args []string) (int64, error) {
+	switch len(args) {
+	case 1:
+		return chain.ChainProvider.QueryLatestHeight(cmd.Context())
+	case 2:
+		return strconv.ParseInt(args[1], 10, 64)
+	default:
+		return 0, nil
+	}
+}
+
+func printQueryHeader(cmd *cobra.Command, header []byte) {
+	output, _ := cmd.Flags().GetString(flagOutput)
+	switch output {
+	case formatJson:
+		fmt.Fprintln(cmd.OutOrStdout(), string(header))
+	case formatLegacy:
+		fallthrough
+	default:
+		fmt.Fprintln(cmd.OutOrStdout(), header)
+	}
 }
 
 // GetCmdQueryConsensusState defines the command to query the consensus state of
@@ -512,45 +539,57 @@ $ %s query client ibc-0 ibczeroclient --height 1205`,
 			appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chain, ok := a.config.Chains[args[0]]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			height, err := cmd.Flags().GetInt64(flagHeight)
-			if err != nil {
-				return err
-			}
-
-			if height == 0 {
-				height, err = chain.ChainProvider.QueryLatestHeight(cmd.Context())
-				if err != nil {
-					return err
-				}
-			}
-
-			if err = chain.AddPath(args[1], dcon); err != nil {
-				return err
-			}
-
-			res, err := chain.ChainProvider.QueryClientStateResponse(cmd.Context(), height, chain.ClientID())
-			if err != nil {
-				return err
-			}
-
-			s, err := chain.ChainProvider.Sprint(res)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Failed to marshal state: %v\n", err)
-				return err
-			}
-
-			fmt.Fprintln(cmd.OutOrStdout(), s)
-			return nil
+			return runQueryClient(a, cmd, args)
 		},
 	}
 	cmd = addOutputFlag(a.viper, cmd)
 	cmd = heightFlag(a.viper, cmd)
 	return cmd
+}
+
+func runQueryClient(a *appState, cmd *cobra.Command, args []string) error {
+	chain, ok := a.config.Chains[args[0]]
+	if !ok {
+		return errChainNotFound(args[0])
+	}
+	height, err := queryHeightFromFlag(cmd, chain)
+	if err != nil {
+		return err
+	}
+	if err = chain.AddPath(args[1], dcon); err != nil {
+		return err
+	}
+	res, err := chain.ChainProvider.QueryClientStateResponse(cmd.Context(), height, chain.ClientID())
+	if err != nil {
+		return err
+	}
+	return printQueryProto(cmd, chain, res, "Failed to marshal state")
+}
+
+func queryHeightFromFlag(cmd *cobra.Command, chain *relayer.Chain) (int64, error) {
+	height, err := cmd.Flags().GetInt64(flagHeight)
+	if err != nil {
+		return 0, err
+	}
+	if height == 0 {
+		return chain.ChainProvider.QueryLatestHeight(cmd.Context())
+	}
+	return height, nil
+}
+
+func printQueryProto(
+	cmd *cobra.Command,
+	chain *relayer.Chain,
+	res proto.Message,
+	errorPrefix string,
+) error {
+	s, err := chain.ChainProvider.Sprint(res)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", errorPrefix, err)
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), s)
+	return nil
 }
 
 func queryClientsCmd(a *appState) *cobra.Command {
@@ -658,48 +697,33 @@ $ %s query client-connections ibc-0 ibczeroclient --height 1205`,
 			appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			//TODO - Add pagination
-
-			chain, ok := a.config.Chains[args[0]]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			if err := chain.AddPath(args[1], dcon); err != nil {
-				return err
-			}
-
-			height, err := cmd.Flags().GetInt64(flagHeight)
-			if err != nil {
-				return err
-			}
-
-			if height == 0 {
-				height, err = chain.ChainProvider.QueryLatestHeight(cmd.Context())
-				if err != nil {
-					return err
-				}
-			}
-
-			res, err := chain.ChainProvider.QueryConnectionsUsingClient(cmd.Context(), height, chain.ClientID())
-			if err != nil {
-				return err
-			}
-
-			s, err := chain.ChainProvider.Sprint(res)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Failed to marshal client connection state: %v\n", err)
-				return err
-			}
-
-			fmt.Fprintln(cmd.OutOrStdout(), s)
-			return nil
+			return runQueryConnectionsUsingClient(a, cmd, args)
 		},
 	}
 
 	cmd = addOutputFlag(a.viper, cmd)
 	cmd = heightFlag(a.viper, cmd)
 	return cmd
+}
+
+func runQueryConnectionsUsingClient(a *appState, cmd *cobra.Command, args []string) error {
+	// TODO - Add pagination.
+	chain, ok := a.config.Chains[args[0]]
+	if !ok {
+		return errChainNotFound(args[0])
+	}
+	if err := chain.AddPath(args[1], dcon); err != nil {
+		return err
+	}
+	height, err := queryHeightFromFlag(cmd, chain)
+	if err != nil {
+		return err
+	}
+	res, err := chain.ChainProvider.QueryConnectionsUsingClient(cmd.Context(), height, chain.ClientID())
+	if err != nil {
+		return err
+	}
+	return printQueryProto(cmd, chain, res, "Failed to marshal client connection state")
 }
 
 func queryConnection(a *appState) *cobra.Command {
@@ -758,43 +782,35 @@ $ %s query connection-channels ibc-2 ibcconnection2 --offset 2 --limit 30`,
 			appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chain, ok := a.config.Chains[args[0]]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			if err := chain.AddPath(dcli, args[1]); err != nil {
-				return err
-			}
-
-			// TODO fix pagination
-			//pagereq, err := client.ReadPageRequest(cmd.Flags())
-			//if err != nil {
-			//	return err
-			//}
-
-			chans, err := chain.ChainProvider.QueryConnectionChannels(cmd.Context(), 0, args[1])
-			if err != nil {
-				return err
-			}
-
-			for _, channel := range chans {
-				s, err := chain.ChainProvider.Sprint(channel)
-				if err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Failed to marshal channel: %v\n", err)
-					continue
-				}
-
-				fmt.Fprintln(cmd.OutOrStdout(), s)
-			}
-
-			return nil
+			return runQueryConnectionChannels(a, cmd, args)
 		},
 	}
 
 	cmd = addOutputFlag(a.viper, cmd)
 	cmd = paginationFlags(a.viper, cmd, "channels associated with a connection")
 	return cmd
+}
+
+func runQueryConnectionChannels(a *appState, cmd *cobra.Command, args []string) error {
+	chain, ok := a.config.Chains[args[0]]
+	if !ok {
+		return errChainNotFound(args[0])
+	}
+	if err := chain.AddPath(dcli, args[1]); err != nil {
+		return err
+	}
+
+	// TODO fix pagination.
+	chans, err := chain.ChainProvider.QueryConnectionChannels(cmd.Context(), 0, args[1])
+	if err != nil {
+		return err
+	}
+	for _, channel := range chans {
+		if err := printQueryProto(cmd, chain, channel, "Failed to marshal channel"); err != nil {
+			continue
+		}
+	}
+	return nil
 }
 
 func queryChannel(a *appState) *cobra.Command {
@@ -808,48 +824,34 @@ $ %s query channel ibc-2 ibctwochannel transfer --height 1205`,
 			appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chain, ok := a.config.Chains[args[0]]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			channelID := args[1]
-			portID := args[2]
-			if err := chain.AddPath(dcli, dcon); err != nil {
-				return err
-			}
-
-			height, err := cmd.Flags().GetInt64(flagHeight)
-			if err != nil {
-				return err
-			}
-
-			if height == 0 {
-				height, err = chain.ChainProvider.QueryLatestHeight(cmd.Context())
-				if err != nil {
-					return err
-				}
-			}
-
-			res, err := chain.ChainProvider.QueryChannel(cmd.Context(), height, channelID, portID)
-			if err != nil {
-				return err
-			}
-
-			s, err := chain.ChainProvider.Sprint(res)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Failed to marshal channel state: %v\n", err)
-				return err
-			}
-
-			fmt.Fprintln(cmd.OutOrStdout(), s)
-			return nil
+			return runQueryChannel(a, cmd, args)
 		},
 	}
 
 	cmd = addOutputFlag(a.viper, cmd)
 	cmd = heightFlag(a.viper, cmd)
 	return cmd
+}
+
+func runQueryChannel(a *appState, cmd *cobra.Command, args []string) error {
+	chain, ok := a.config.Chains[args[0]]
+	if !ok {
+		return errChainNotFound(args[0])
+	}
+	channelID := args[1]
+	portID := args[2]
+	if err := chain.AddPath(dcli, dcon); err != nil {
+		return err
+	}
+	height, err := queryHeightFromFlag(cmd, chain)
+	if err != nil {
+		return err
+	}
+	res, err := chain.ChainProvider.QueryChannel(cmd.Context(), height, channelID, portID)
+	if err != nil {
+		return err
+	}
+	return printQueryProto(cmd, chain, res, "Failed to marshal channel state")
 }
 
 // chanExtendedInfo is an intermediate type for holding additional useful
@@ -905,121 +907,176 @@ const concurrentQueries = 10
 
 func queryChannelsToChain(cmd *cobra.Command, chain *relayer.Chain, dstChain *relayer.Chain) error {
 	ctx := cmd.Context()
-
 	clients, err := chain.ChainProvider.QueryClients(ctx)
 	if err != nil {
 		return err
 	}
-
 	for _, client := range clients {
-		clientInfo, err := relayer.ClientInfoFromClientState(client.ClientState)
-		if err != nil {
-			continue
-		}
-		if clientInfo.ChainID != dstChain.ChainProvider.ChainId() {
-			continue
-		}
-		connections, err := chain.ChainProvider.QueryConnectionsUsingClient(ctx, 0, client.ClientId)
-		if err != nil {
-			continue
-		}
-
-		var wg sync.WaitGroup
-		i := 0
-		for _, conn := range connections.Connections {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				channels, err := chain.ChainProvider.QueryConnectionChannels(ctx, 0, conn.Id)
-				if err != nil {
-					return
-				}
-				for _, channel := range channels {
-					printChannelWithExtendedInfo(cmd, chain, channel, &chanExtendedInfo{
-						clientID:             client.ClientId,
-						counterpartyChainID:  clientInfo.ChainID,
-						counterpartyClientID: conn.Counterparty.ClientId,
-						counterpartyConnID:   conn.Counterparty.ConnectionId,
-					})
-				}
-			}()
-			i++
-			if i%concurrentQueries == 0 {
-				wg.Wait()
-			}
-		}
-		wg.Wait()
+		queryClientChannelsToChain(cmd, chain, dstChain, client)
 	}
-
 	return nil
 }
 
-func queryChannelsPaginated(cmd *cobra.Command, chain *relayer.Chain, pageReq *query.PageRequest) error {
-	var chans []*chantypes.IdentifiedChannel
-	var next []byte
-	var err error
-
-	ctx := cmd.Context()
-
-	ccp, isCosmosChain := chain.ChainProvider.(*cosmos.CosmosProvider)
-	if isCosmosChain {
-		chans, next, err = ccp.QueryChannelsPaginated(ctx, pageReq)
-	} else {
-		chans, err = chain.ChainProvider.QueryChannels(ctx)
-	}
+func queryClientChannelsToChain(
+	cmd *cobra.Command,
+	chain,
+	dstChain *relayer.Chain,
+	clientState clienttypes.IdentifiedClientState,
+) {
+	clientInfo, err := relayer.ClientInfoFromClientState(clientState.ClientState)
 	if err != nil {
-		return err
+		return
 	}
-
-	uniqueConns := make(map[string]interface{})
-
-	for _, channel := range chans {
-		if len(channel.ConnectionHops) == 0 {
-			continue
-		}
-		uniqueConns[channel.ConnectionHops[0]] = struct{}{}
+	if clientInfo.ChainID != dstChain.ChainProvider.ChainId() {
+		return
 	}
-
-	connectionClients := make(map[string]chanExtendedInfo)
-	var mu sync.Mutex
+	connections, err := chain.ChainProvider.QueryConnectionsUsingClient(cmd.Context(), 0, clientState.ClientId)
+	if err != nil {
+		return
+	}
 
 	var wg sync.WaitGroup
-	i := 0
-	for c := range uniqueConns {
+	for i, conn := range connections.Connections {
 		wg.Add(1)
-		c := c
-		go func() {
-			defer wg.Done()
-			conn, err := chain.ChainProvider.QueryConnection(ctx, 0, c)
-			if err != nil {
-				return
-			}
-			client, err := chain.ChainProvider.QueryClientStateResponse(ctx, 0, conn.Connection.ClientId)
-			if err != nil {
-				return
-			}
-			clientInfo, err := relayer.ClientInfoFromClientState(client.ClientState)
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			connectionClients[c] = chanExtendedInfo{
-				clientID:             conn.Connection.ClientId,
-				counterpartyClientID: conn.Connection.Counterparty.ClientId,
-				counterpartyConnID:   conn.Connection.Counterparty.ConnectionId,
-				counterpartyChainID:  clientInfo.ChainID,
-			}
-		}()
-		i++
-		if i%concurrentQueries == 0 {
+		info := chanExtendedInfo{
+			clientID:             clientState.ClientId,
+			counterpartyChainID:  clientInfo.ChainID,
+			counterpartyClientID: conn.Counterparty.ClientId,
+			counterpartyConnID:   conn.Counterparty.ConnectionId,
+		}
+		go queryConnectionChannelsToChain(cmd, chain, conn.Id, info, &wg)
+		if (i+1)%concurrentQueries == 0 {
 			wg.Wait()
 		}
 	}
-
 	wg.Wait()
+}
 
-	for _, channel := range chans {
+func queryConnectionChannelsToChain(
+	cmd *cobra.Command,
+	chain *relayer.Chain,
+	connectionID string,
+	info chanExtendedInfo,
+	wg *sync.WaitGroup,
+) {
+	defer wg.Done()
+	channels, err := chain.ChainProvider.QueryConnectionChannels(cmd.Context(), 0, connectionID)
+	if err != nil {
+		return
+	}
+	for _, channel := range channels {
+		printChannelWithExtendedInfo(cmd, chain, channel, &info)
+	}
+}
+
+type queryChannelsPage struct {
+	channels      []*chantypes.IdentifiedChannel
+	next          []byte
+	isCosmosChain bool
+}
+
+func queryChannelsPaginated(cmd *cobra.Command, chain *relayer.Chain, pageReq *query.PageRequest) error {
+	page, err := loadQueryChannelsPage(cmd, chain, pageReq)
+	if err != nil {
+		return err
+	}
+	uniqueConnections := uniqueChannelConnections(page.channels)
+	connectionClients := queryConnectionClients(cmd, chain, uniqueConnections)
+	printChannelsWithConnectionClients(cmd, chain, page.channels, connectionClients)
+	if page.isCosmosChain {
+		fmt.Fprintf(cmd.ErrOrStderr(), "\nPagination next key: %s\n", string(page.next))
+	}
+	return nil
+}
+
+func loadQueryChannelsPage(
+	cmd *cobra.Command,
+	chain *relayer.Chain,
+	pageReq *query.PageRequest,
+) (queryChannelsPage, error) {
+	ccp, isCosmosChain := chain.ChainProvider.(*cosmos.CosmosProvider)
+	if isCosmosChain {
+		channels, next, err := ccp.QueryChannelsPaginated(cmd.Context(), pageReq)
+		return queryChannelsPage{channels, next, true}, err
+	}
+	channels, err := chain.ChainProvider.QueryChannels(cmd.Context())
+	return queryChannelsPage{channels: channels}, err
+}
+
+func uniqueChannelConnections(channels []*chantypes.IdentifiedChannel) map[string]interface{} {
+	uniqueConnections := make(map[string]interface{})
+	for _, channel := range channels {
+		if len(channel.ConnectionHops) == 0 {
+			continue
+		}
+		uniqueConnections[channel.ConnectionHops[0]] = struct{}{}
+	}
+	return uniqueConnections
+}
+
+func queryConnectionClients(
+	cmd *cobra.Command,
+	chain *relayer.Chain,
+	connectionIDs map[string]interface{},
+) map[string]chanExtendedInfo {
+	connectionClients := make(map[string]chanExtendedInfo)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	index := 0
+	for connectionID := range connectionIDs {
+		wg.Add(1)
+		go queryConnectionClient(cmd, chain, connectionID, connectionClients, &mu, &wg)
+		index++
+		if index%concurrentQueries == 0 {
+			wg.Wait()
+		}
+	}
+	wg.Wait()
+	return connectionClients
+}
+
+func queryConnectionClient(
+	cmd *cobra.Command,
+	chain *relayer.Chain,
+	connectionID string,
+	connectionClients map[string]chanExtendedInfo,
+	mu *sync.Mutex,
+	wg *sync.WaitGroup,
+) {
+	defer wg.Done()
+	conn, err := chain.ChainProvider.QueryConnection(cmd.Context(), 0, connectionID)
+	if err != nil {
+		return
+	}
+	clientState, err := chain.ChainProvider.QueryClientStateResponse(
+		cmd.Context(), 0, conn.Connection.ClientId,
+	)
+	if err != nil {
+		return
+	}
+	clientInfo, err := relayer.ClientInfoFromClientState(clientState.ClientState)
+	if err != nil {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	connectionClients[connectionID] = chanExtendedInfo{
+		clientID:             conn.Connection.ClientId,
+		counterpartyClientID: conn.Connection.Counterparty.ClientId,
+		counterpartyConnID:   conn.Connection.Counterparty.ConnectionId,
+		counterpartyChainID:  clientInfo.ChainID,
+	}
+}
+
+func printChannelsWithConnectionClients(
+	cmd *cobra.Command,
+	chain *relayer.Chain,
+	channels []*chantypes.IdentifiedChannel,
+	connectionClients map[string]chanExtendedInfo,
+) {
+	for _, channel := range channels {
+		// Keep indexing the first hop before the lookup. Existing callers rely on
+		// the panic for malformed channels with no connection hops.
 		chanInfo, ok := connectionClients[channel.ConnectionHops[0]]
 		if !ok {
 			printChannelWithExtendedInfo(cmd, chain, channel, nil)
@@ -1027,12 +1084,6 @@ func queryChannelsPaginated(cmd *cobra.Command, chain *relayer.Chain, pageReq *q
 		}
 		printChannelWithExtendedInfo(cmd, chain, channel, &chanInfo)
 	}
-
-	if isCosmosChain {
-		fmt.Fprintf(cmd.ErrOrStderr(), "\nPagination next key: %s\n", string(next))
-	}
-
-	return nil
 }
 
 func queryChannels(a *appState) *cobra.Command {
@@ -1130,44 +1181,29 @@ $ %s query unrelayed-pkts demo-path channel-0`,
 			appName, appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := a.config.Paths.Get(args[0])
-			if err != nil {
-				return err
-			}
-
-			src, dst := path.Src.ChainID, path.Dst.ChainID
-
-			c, err := a.config.Chains.Gets(src, dst)
-			if err != nil {
-				return err
-			}
-
-			if err = c[src].SetPath(path.Src); err != nil {
-				return err
-			}
-			if err = c[dst].SetPath(path.Dst); err != nil {
-				return err
-			}
-
-			channelID := args[1]
-			channel, err := relayer.QueryChannel(cmd.Context(), c[src], channelID)
-			if err != nil {
-				return err
-			}
-
-			sp := relayer.UnrelayedSequences(cmd.Context(), c[src], c[dst], channel)
-
-			out, err := json.Marshal(sp)
-			if err != nil {
-				return err
-			}
-
-			fmt.Fprintln(cmd.OutOrStdout(), string(out))
-			return nil
+			return runQueryUnrelayedPackets(a, cmd, args)
 		},
 	}
 	cmd = addOutputFlag(a.viper, cmd)
 	return cmd
+}
+
+func runQueryUnrelayedPackets(a *appState, cmd *cobra.Command, args []string) error {
+	src, dst, err := setupQueryPath(a, args[0])
+	if err != nil {
+		return err
+	}
+	channel, err := relayer.QueryChannel(cmd.Context(), src, args[1])
+	if err != nil {
+		return err
+	}
+	sequences := relayer.UnrelayedSequences(cmd.Context(), src, dst, channel)
+	out, err := json.Marshal(sequences)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), string(out))
+	return nil
 }
 
 func queryUnrelayedAcknowledgements(a *appState) *cobra.Command {
@@ -1183,43 +1219,48 @@ $ %s query unrelayed-acks demo-path channel-0`,
 			appName, appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := a.config.Paths.Get(args[0])
-			if err != nil {
-				return err
-			}
-			src, dst := path.Src.ChainID, path.Dst.ChainID
-
-			c, err := a.config.Chains.Gets(src, dst)
-			if err != nil {
-				return err
-			}
-
-			if err = c[src].SetPath(path.Src); err != nil {
-				return err
-			}
-			if err = c[dst].SetPath(path.Dst); err != nil {
-				return err
-			}
-
-			channelID := args[1]
-			channel, err := relayer.QueryChannel(cmd.Context(), c[src], channelID)
-			if err != nil {
-				return err
-			}
-
-			sp := relayer.UnrelayedAcknowledgements(cmd.Context(), c[src], c[dst], channel)
-
-			out, err := json.Marshal(sp)
-			if err != nil {
-				return err
-			}
-
-			fmt.Fprintln(cmd.OutOrStdout(), string(out))
-			return nil
+			return runQueryUnrelayedAcknowledgements(a, cmd, args)
 		},
 	}
 	cmd = addOutputFlag(a.viper, cmd)
 	return cmd
+}
+
+func runQueryUnrelayedAcknowledgements(a *appState, cmd *cobra.Command, args []string) error {
+	src, dst, err := setupQueryPath(a, args[0])
+	if err != nil {
+		return err
+	}
+	channel, err := relayer.QueryChannel(cmd.Context(), src, args[1])
+	if err != nil {
+		return err
+	}
+	sequences := relayer.UnrelayedAcknowledgements(cmd.Context(), src, dst, channel)
+	out, err := json.Marshal(sequences)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), string(out))
+	return nil
+}
+
+func setupQueryPath(a *appState, pathName string) (*relayer.Chain, *relayer.Chain, error) {
+	path, err := a.config.Paths.Get(pathName)
+	if err != nil {
+		return nil, nil, err
+	}
+	src, dst := path.Src.ChainID, path.Dst.ChainID
+	chains, err := a.config.Chains.Gets(src, dst)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = chains[src].SetPath(path.Src); err != nil {
+		return nil, nil, err
+	}
+	if err = chains[dst].SetPath(path.Dst); err != nil {
+		return nil, nil, err
+	}
+	return chains[src], chains[dst], nil
 }
 
 func queryClientsExpiration(a *appState) *cobra.Command {
@@ -1233,52 +1274,39 @@ $ %s query clients-expiration demo-path`,
 			appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := a.config.Paths.Get(args[0])
-			if err != nil {
-				return err
-			}
-			src, dst := path.Src.ChainID, path.Dst.ChainID
-			c, err := a.config.Chains.Gets(src, dst)
-			if err != nil {
-				return err
-			}
-
-			if err = c[src].SetPath(path.Src); err != nil {
-				return err
-			}
-			if err = c[dst].SetPath(path.Dst); err != nil {
-				return err
-			}
-
-			srcExpiration, srcClientInfo, errSrc := relayer.QueryClientExpiration(cmd.Context(), c[src], c[dst])
-			if errSrc != nil && !strings.Contains(errSrc.Error(), "light client not found") {
-				return errSrc
-			}
-			dstExpiration, dstClientInfo, errDst := relayer.QueryClientExpiration(cmd.Context(), c[dst], c[src])
-			if errDst != nil && !strings.Contains(errDst.Error(), "light client not found") {
-				return errDst
-			}
-
-			output, _ := cmd.Flags().GetString(flagOutput)
-
-			srcClientExpiration := relayer.SPrintClientExpiration(c[src], srcExpiration, srcClientInfo)
-			dstClientExpiration := relayer.SPrintClientExpiration(c[dst], dstExpiration, dstClientInfo)
-
-			if output == formatJson {
-				srcClientExpiration = relayer.SPrintClientExpirationJson(c[src], srcExpiration, srcClientInfo)
-				dstClientExpiration = relayer.SPrintClientExpirationJson(c[dst], dstExpiration, dstClientInfo)
-			}
-
-			if errSrc == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), srcClientExpiration)
-			}
-
-			if errDst == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), dstClientExpiration)
-			}
-			return nil
+			return runQueryClientsExpiration(a, cmd, args)
 		},
 	}
 	cmd = addOutputFlag(a.viper, cmd)
 	return cmd
+}
+
+func runQueryClientsExpiration(a *appState, cmd *cobra.Command, args []string) error {
+	src, dst, err := setupQueryPath(a, args[0])
+	if err != nil {
+		return err
+	}
+	srcExpiration, srcClientInfo, errSrc := relayer.QueryClientExpiration(cmd.Context(), src, dst)
+	if errSrc != nil && !strings.Contains(errSrc.Error(), "light client not found") {
+		return errSrc
+	}
+	dstExpiration, dstClientInfo, errDst := relayer.QueryClientExpiration(cmd.Context(), dst, src)
+	if errDst != nil && !strings.Contains(errDst.Error(), "light client not found") {
+		return errDst
+	}
+
+	output, _ := cmd.Flags().GetString(flagOutput)
+	srcClientExpiration := relayer.SPrintClientExpiration(src, srcExpiration, srcClientInfo)
+	dstClientExpiration := relayer.SPrintClientExpiration(dst, dstExpiration, dstClientInfo)
+	if output == formatJson {
+		srcClientExpiration = relayer.SPrintClientExpirationJson(src, srcExpiration, srcClientInfo)
+		dstClientExpiration = relayer.SPrintClientExpirationJson(dst, dstExpiration, dstClientInfo)
+	}
+	if errSrc == nil {
+		fmt.Fprintln(cmd.OutOrStdout(), srcClientExpiration)
+	}
+	if errDst == nil {
+		fmt.Fprintln(cmd.OutOrStdout(), dstClientExpiration)
+	}
+	return nil
 }
