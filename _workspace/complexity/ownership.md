@@ -14,7 +14,7 @@ Base: `origin/main@4c1029d1177f797f11bcd560f14a18305a2e7353`
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-engineer` is the only `ACTIVE` editor for cli-chains production. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-verifier` is the only `ACTIVE` editor for cli-chains review evidence. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
@@ -30,7 +30,7 @@ Exclusive worktree lease: `complexity-engineer` is the only `ACTIVE` editor for 
 | cli-start production | complexity-engineer | `cmd/start.go`, `cmd/flags.go` only | same worktree, after characterization approval | completed; targets `1/0`, `4/3`, `5/4`; helpers max `9/9` |
 | cli-start review | complexity-verifier | `_workspace/complexity/reviews/cli-start.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
 | cli-chains characterization | complexity-characterization-engineer | characterization tests for `cmd/chains.go`; `_workspace/complexity/characterization/cli-chains.md` | `/Users/pantani/.codex/worktrees/complexity-cli-chains/relayer` | completed; 20 scenarios, 21 focused/race checks, package 159 pass |
-| cli-chains production | complexity-engineer | `cmd/chains.go` only | same worktree, after characterization approval | active; tests and campaign state read-only |
-| cli-chains review | complexity-verifier | `_workspace/complexity/reviews/cli-chains.md` only | same worktree under exclusive sequential lease | pending |
+| cli-chains production | complexity-engineer | `cmd/chains.go` only | same worktree, after characterization approval | completed; targets `1/0, 1/0, 1/0, 1/0, 5/3`; helpers max `8/8` |
+| cli-chains review | complexity-verifier | `_workspace/complexity/reviews/cli-chains.md` only | same worktree under exclusive sequential lease | active; production and characterization read-only |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
