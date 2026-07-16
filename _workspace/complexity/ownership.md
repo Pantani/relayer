@@ -8,6 +8,7 @@ Base: `origin/main@4c1029d1177f797f11bcd560f14a18305a2e7353`
 | PR | Head | Files | Collision |
 |---|---|---|---|
 | [#9](https://github.com/Pantani/relayer/pull/9) | `Pantani/cx/fix-shared-ci@c07c649` | `Dockerfile`, `interchaintest/misbehaviour_test.go` | none with cli-version/harness |
+| [#10](https://github.com/Pantani/relayer/pull/10) (draft) | `Pantani/cx/complexity-cli-version@505cf8d` | `cmd/version.go`, `cmd/version_test.go`, harness/state | campaign subwave; no collision with #9 |
 
 ## Campaign ownership
 
@@ -15,7 +16,7 @@ Exclusive worktree lease: `complexity-orchestrator` is the only `ACTIVE` editor 
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
-| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-cli-version/relayer` | active |
+| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-cli-version/relayer` | active; PR #10 published as draft |
 | cli-version characterization | complexity-characterization-engineer | `cmd/version_test.go`, `_workspace/complexity/characterization/cli-version.md` | same worktree under exclusive sequential lease | completed |
 | cli-version production | complexity-engineer | `cmd/version.go` only | same worktree, after characterization and harness approval | completed |
 | cli-version review | complexity-verifier | `_workspace/complexity/reviews/cli-version.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
