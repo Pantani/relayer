@@ -352,44 +352,57 @@ func (cc *CosmosProvider) startLivelinessChecks(ctx context.Context, timeout tim
 			_, err := cc.ConsensusClient.GetStatus(ctx)
 			if err != nil {
 				cc.log.Error("RPC client disconnected", zap.String("chain", cc.ChainName()), zap.Error(err))
-
-				index := -1
-				attempts := 0
-
-				// attempt to connect to the backup RPC client
-				for {
-
-					attempts++
-					if attempts > len(rpcs) {
-						cc.log.Error("All configured RPC endpoints return non-200 response", zap.String("chain", cc.ChainName()), zap.Error(err))
-						break
-					}
-
-					// get next rpc
-					index = (index + 1) % len(rpcs)
-					rpcAddr := rpcs[index]
-
-					cc.log.Info("Attempting to connect to new RPC", zap.String("chain", cc.ChainName()), zap.String("rpc", rpcAddr))
-
-					// attempt to setup rpc client
-					if err = cc.setRpcClient(false, rpcAddr, timeout); err != nil {
-						cc.log.Error("Failed to connect to RPC client", zap.String("chain", cc.ChainName()), zap.String("rpc", rpcAddr), zap.Error(err))
-						continue
-					}
-
-					// attempt to setup light client
-					if err = cc.setLightProvider(rpcAddr); err != nil {
-						cc.log.Error("Failed to connect to light client provider", zap.String("chain", cc.ChainName()), zap.String("rpc", rpcAddr), zap.Error(err))
-						continue
-					}
-
-					cc.log.Info("Successfully connected to new RPC", zap.String("chain", cc.ChainName()), zap.String("rpc", rpcAddr))
-
-					// rpc found, escape
-					break
-				}
+				cc.reconnectRPCs(rpcs, timeout, err)
 			}
 		}
+	}
+}
+
+func (cc *CosmosProvider) reconnectRPCs(rpcs []string, timeout time.Duration, err error) {
+	index := -1
+	attempts := 0
+	for {
+		attempts++
+		if attempts > len(rpcs) {
+			cc.log.Error(
+				"All configured RPC endpoints return non-200 response",
+				zap.String("chain", cc.ChainName()),
+				zap.Error(err),
+			)
+			break
+		}
+
+		index = (index + 1) % len(rpcs)
+		rpcAddr := rpcs[index]
+		cc.log.Info(
+			"Attempting to connect to new RPC",
+			zap.String("chain", cc.ChainName()),
+			zap.String("rpc", rpcAddr),
+		)
+		if err = cc.setRpcClient(false, rpcAddr, timeout); err != nil {
+			cc.log.Error(
+				"Failed to connect to RPC client",
+				zap.String("chain", cc.ChainName()),
+				zap.String("rpc", rpcAddr),
+				zap.Error(err),
+			)
+			continue
+		}
+		if err = cc.setLightProvider(rpcAddr); err != nil {
+			cc.log.Error(
+				"Failed to connect to light client provider",
+				zap.String("chain", cc.ChainName()),
+				zap.String("rpc", rpcAddr),
+				zap.Error(err),
+			)
+			continue
+		}
+		cc.log.Info(
+			"Successfully connected to new RPC",
+			zap.String("chain", cc.ChainName()),
+			zap.String("rpc", rpcAddr),
+		)
+		break
 	}
 }
 
