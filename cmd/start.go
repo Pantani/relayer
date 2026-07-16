@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/cosmos/relayer/v2/internal/relaydebug"
 	"github.com/cosmos/relayer/v2/internal/relayermetrics"
@@ -45,119 +46,7 @@ $ %s start demo-path # start the 'demo-path' path
 $ %s start demo-path --max-msgs 3
 $ %s start demo-path2 --max-tx-size 10`, appName, appName, appName, appName)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chains := make(map[string]*relayer.Chain)
-			paths := make([]relayer.NamedPath, len(args))
-
-			if len(args) > 0 {
-				for i, pathName := range args {
-					path := a.config.Paths.MustGet(pathName)
-					paths[i] = relayer.NamedPath{
-						Name: pathName,
-						Path: path,
-					}
-
-					// collect unique chain IDs
-					chains[path.Src.ChainID] = nil
-					chains[path.Dst.ChainID] = nil
-				}
-			} else {
-				for n, path := range a.config.Paths {
-					paths = append(paths, relayer.NamedPath{
-						Name: n,
-						Path: path,
-					})
-
-					// collect unique chain IDs
-					chains[path.Src.ChainID] = nil
-					chains[path.Dst.ChainID] = nil
-				}
-			}
-
-			chainIDs := make([]string, 0, len(chains))
-			for chainID := range chains {
-				chainIDs = append(chainIDs, chainID)
-			}
-
-			// get chain configurations
-			chains, err := a.config.Chains.Gets(chainIDs...)
-			if err != nil {
-				return err
-			}
-
-			if err := ensureKeysExist(chains); err != nil {
-				return err
-			}
-
-			maxMsgLength, err := cmd.Flags().GetUint64(flagMaxMsgLength)
-			if err != nil {
-				return err
-			}
-
-			err = setupDebugServer(cmd, a, err)
-			if err != nil {
-				return err
-			}
-
-			prometheusMetrics, err := setupMetricsServer(cmd, a, err, chains)
-			if err != nil {
-				return err
-			}
-
-			processorType, err := cmd.Flags().GetString(flagProcessor)
-			if err != nil {
-				return err
-			}
-
-			initialBlockHistory, err := cmd.Flags().GetUint64(flagInitialBlockHistory)
-			if err != nil {
-				return err
-			}
-
-			clientUpdateThresholdTime, err := cmd.Flags().GetDuration(flagThresholdTime)
-			if err != nil {
-				return err
-			}
-
-			flushInterval, err := cmd.Flags().GetDuration(flagFlushInterval)
-			if err != nil {
-				return err
-			}
-
-			stuckPacket, err := parseStuckPacketFromFlags(cmd)
-			if err != nil {
-				return err
-			}
-
-			rlyErrCh := relayer.StartRelayer(
-				cmd.Context(),
-				a.log,
-				chains,
-				paths,
-				maxMsgLength,
-				a.config.Global.MaxReceiverSize,
-				a.config.Global.ICS20MemoLimit,
-				a.config.memo(cmd),
-				clientUpdateThresholdTime,
-				flushInterval,
-				nil,
-				processorType,
-				initialBlockHistory,
-				prometheusMetrics,
-				stuckPacket,
-			)
-
-			// Block until the error channel sends a message.
-			// The context being canceled will cause the relayer to stop,
-			// so we don't want to separately monitor the ctx.Done channel,
-			// because we would risk returning before the relayer cleans up.
-			if err := <-rlyErrCh; err != nil && !errors.Is(err, context.Canceled) {
-				a.log.Warn(
-					"Relayer start error",
-					zap.Error(err),
-				)
-				return err
-			}
-			return nil
+			return runStartCommand(cmd, args, a)
 		},
 	}
 	cmd = updateTimeFlags(a.viper, cmd)
@@ -170,6 +59,149 @@ $ %s start demo-path2 --max-tx-size 10`, appName, appName, appName, appName)),
 	cmd = memoFlag(a.viper, cmd)
 	cmd = stuckPacketFlags(a.viper, cmd)
 	return cmd
+}
+
+type startOptions struct {
+	maxMsgLength              uint64
+	processorType             string
+	initialBlockHistory       uint64
+	clientUpdateThresholdTime time.Duration
+	flushInterval             time.Duration
+	prometheusMetrics         *processor.PrometheusMetrics
+	stuckPacket               *processor.StuckPacket
+}
+
+func runStartCommand(cmd *cobra.Command, args []string, a *appState) error {
+	paths, chainIDs := startPathsAndChainIDs(a.config, args)
+
+	// get chain configurations
+	chains, err := a.config.Chains.Gets(chainIDs...)
+	if err != nil {
+		return err
+	}
+
+	if err := ensureKeysExist(chains); err != nil {
+		return err
+	}
+
+	options, err := getStartOptions(cmd, a, chains)
+	if err != nil {
+		return err
+	}
+
+	rlyErrCh := relayer.StartRelayer(
+		cmd.Context(),
+		a.log,
+		chains,
+		paths,
+		options.maxMsgLength,
+		a.config.Global.MaxReceiverSize,
+		a.config.Global.ICS20MemoLimit,
+		a.config.memo(cmd),
+		options.clientUpdateThresholdTime,
+		options.flushInterval,
+		nil,
+		options.processorType,
+		options.initialBlockHistory,
+		options.prometheusMetrics,
+		options.stuckPacket,
+	)
+
+	// Block until the error channel sends a message.
+	// The context being canceled will cause the relayer to stop,
+	// so we don't want to separately monitor the ctx.Done channel,
+	// because we would risk returning before the relayer cleans up.
+	if err := <-rlyErrCh; err != nil && !errors.Is(err, context.Canceled) {
+		a.log.Warn(
+			"Relayer start error",
+			zap.Error(err),
+		)
+		return err
+	}
+	return nil
+}
+
+func startPathsAndChainIDs(config *Config, args []string) ([]relayer.NamedPath, []string) {
+	chains := make(map[string]*relayer.Chain)
+	paths := make([]relayer.NamedPath, len(args))
+
+	if len(args) > 0 {
+		for i, pathName := range args {
+			path := config.Paths.MustGet(pathName)
+			paths[i] = relayer.NamedPath{
+				Name: pathName,
+				Path: path,
+			}
+
+			// collect unique chain IDs
+			chains[path.Src.ChainID] = nil
+			chains[path.Dst.ChainID] = nil
+		}
+	} else {
+		for n, path := range config.Paths {
+			paths = append(paths, relayer.NamedPath{
+				Name: n,
+				Path: path,
+			})
+
+			// collect unique chain IDs
+			chains[path.Src.ChainID] = nil
+			chains[path.Dst.ChainID] = nil
+		}
+	}
+
+	chainIDs := make([]string, 0, len(chains))
+	for chainID := range chains {
+		chainIDs = append(chainIDs, chainID)
+	}
+	return paths, chainIDs
+}
+
+func getStartOptions(cmd *cobra.Command, a *appState, chains map[string]*relayer.Chain) (startOptions, error) {
+	var options startOptions
+	var err error
+
+	options.maxMsgLength, err = cmd.Flags().GetUint64(flagMaxMsgLength)
+	if err != nil {
+		return startOptions{}, err
+	}
+
+	err = setupDebugServer(cmd, a, err)
+	if err != nil {
+		return startOptions{}, err
+	}
+
+	options.prometheusMetrics, err = setupMetricsServer(cmd, a, err, chains)
+	if err != nil {
+		return startOptions{}, err
+	}
+
+	options.processorType, err = cmd.Flags().GetString(flagProcessor)
+	if err != nil {
+		return startOptions{}, err
+	}
+
+	options.initialBlockHistory, err = cmd.Flags().GetUint64(flagInitialBlockHistory)
+	if err != nil {
+		return startOptions{}, err
+	}
+
+	options.clientUpdateThresholdTime, err = cmd.Flags().GetDuration(flagThresholdTime)
+	if err != nil {
+		return startOptions{}, err
+	}
+
+	options.flushInterval, err = cmd.Flags().GetDuration(flagFlushInterval)
+	if err != nil {
+		return startOptions{}, err
+	}
+
+	options.stuckPacket, err = parseStuckPacketFromFlags(cmd)
+	if err != nil {
+		return startOptions{}, err
+	}
+
+	return options, nil
 }
 
 func setupMetricsServer(cmd *cobra.Command, a *appState, err error, chains map[string]*relayer.Chain) (*processor.PrometheusMetrics, error) {
@@ -217,6 +249,24 @@ func setupMetricsServer(cmd *cobra.Command, a *appState, err error, chains map[s
 }
 
 func setupDebugServer(cmd *cobra.Command, a *appState, err error) error {
+	debugListenAddr, enableDebugServer, err := getDebugServerSettings(cmd, a)
+	if err != nil {
+		return err
+	}
+
+	if !enableDebugServer {
+		a.log.Info("Debug server is disabled you can enable it using --enable-debug-server flag")
+		return nil
+	}
+	if debugListenAddr == "" {
+		a.log.Warn("Disabled debug server due to missing debug-listen-addr setting in config file or --debug-listen-addr flag")
+		return nil
+	}
+
+	return startDebugServer(cmd, a, debugListenAddr)
+}
+
+func getDebugServerSettings(cmd *cobra.Command, a *appState) (string, bool, error) {
 	debugListenAddr := a.config.Global.DebugListenPort
 
 	if debugListenAddr == "" {
@@ -228,12 +278,12 @@ func setupDebugServer(cmd *cobra.Command, a *appState, err error) error {
 
 	debugAddrFlag, err := cmd.Flags().GetString(flagDebugAddr)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 
 	debugListenAddrFlag, err := cmd.Flags().GetString(flagDebugListenAddr)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 
 	if debugAddrFlag != "" {
@@ -247,27 +297,23 @@ func setupDebugServer(cmd *cobra.Command, a *appState, err error) error {
 
 	flagEnableDebugServer, err := cmd.Flags().GetBool(flagEnableDebugServer)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 
-	enableDebugServer := flagEnableDebugServer == true || debugAddrFlag != ""
+	return debugListenAddr, flagEnableDebugServer || debugAddrFlag != "", nil
+}
 
-	if enableDebugServer == false {
-		a.log.Info("Debug server is disabled you can enable it using --enable-debug-server flag")
-	} else if debugListenAddr == "" {
-		a.log.Warn("Disabled debug server due to missing debug-listen-addr setting in config file or --debug-listen-addr flag")
-	} else {
-		a.log.Info("Debug server is enabled")
-		a.log.Warn("SECURITY WARNING! Debug server should only be run with caution and proper security in place")
-		ln, err := net.Listen("tcp", debugListenAddr)
-		if err != nil {
-			a.log.Error(fmt.Sprintf("Failed to start debug server you can change the address and port using debug-listen-addr config settingh or --debug-listen-flag"))
+func startDebugServer(cmd *cobra.Command, a *appState, debugListenAddr string) error {
+	a.log.Info("Debug server is enabled")
+	a.log.Warn("SECURITY WARNING! Debug server should only be run with caution and proper security in place")
+	ln, err := net.Listen("tcp", debugListenAddr)
+	if err != nil {
+		a.log.Error(fmt.Sprintf("Failed to start debug server you can change the address and port using debug-listen-addr config settingh or --debug-listen-flag"))
 
-			return fmt.Errorf("failed to listen on debug address %q: %w", debugListenAddr, err)
-		}
-		log := a.log.With(zap.String("sys", "debughttp"))
-		log.Info("Debug server listening", zap.String("addr", debugListenAddr))
-		relaydebug.StartDebugServer(cmd.Context(), log, ln)
+		return fmt.Errorf("failed to listen on debug address %q: %w", debugListenAddr, err)
 	}
+	log := a.log.With(zap.String("sys", "debughttp"))
+	log.Info("Debug server listening", zap.String("addr", debugListenAddr))
+	relaydebug.StartDebugServer(cmd.Context(), log, ln)
 	return nil
 }
