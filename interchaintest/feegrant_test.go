@@ -33,7 +33,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const feegrantPath = "gaia-osmosis"
+const (
+	feegrantPath            = "gaia-osmosis"
+	feegrantTxQueryAttempts = uint(30)
+	feegrantTxQueryDelay    = 500 * time.Millisecond
+)
 
 const (
 	recvPacketMsgType      = "/ibc.core.channel.v1.MsgRecvPacket"
@@ -521,8 +525,7 @@ func decodeFeegrantTx(
 	hash, err := hex.DecodeString(txHash)
 	require.Nil(t, err)
 	txResponse, err := TxWithRetry(ctx, provider.ConsensusClient, hash)
-	require.Nil(t, err)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	decoder := provider.Cdc.TxConfig.TxDecoder()
 	tx, err := decoder(txResponse.Tx)
@@ -696,7 +699,13 @@ func TxWithRetry(ctx context.Context, client cclient.ConsensusClient, hash []byt
 	if err = retry.Do(func() error {
 		res, err = client.GetTx(ctx, hash, true)
 		return err
-	}, retry.Context(ctx), relayer.RtyAtt, relayer.RtyDel, relayer.RtyErr); err != nil {
+	},
+		retry.Context(ctx),
+		retry.Attempts(feegrantTxQueryAttempts),
+		retry.Delay(feegrantTxQueryDelay),
+		retry.DelayType(retry.FixedDelay),
+		relayer.RtyErr,
+	); err != nil {
 		return res, err
 	}
 
