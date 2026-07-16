@@ -14,7 +14,7 @@ Base: `origin/main@4c1029d1177f797f11bcd560f14a18305a2e7353`
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-characterization-engineer` is the only `ACTIVE` editor for cli-chains characterization. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-engineer` is the only `ACTIVE` editor for cli-chains production. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
@@ -29,8 +29,8 @@ Exclusive worktree lease: `complexity-characterization-engineer` is the only `AC
 | cli-start characterization | complexity-characterization-engineer | characterization tests for `cmd/start.go` and `cmd/flags.go`; `_workspace/complexity/characterization/cli-start.md` | `/Users/pantani/.codex/worktrees/complexity-cli-start/relayer` | completed; 20 scenarios, 47 focused/race checks, package 138 pass |
 | cli-start production | complexity-engineer | `cmd/start.go`, `cmd/flags.go` only | same worktree, after characterization approval | completed; targets `1/0`, `4/3`, `5/4`; helpers max `9/9` |
 | cli-start review | complexity-verifier | `_workspace/complexity/reviews/cli-start.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
-| cli-chains characterization | complexity-characterization-engineer | characterization tests for `cmd/chains.go`; `_workspace/complexity/characterization/cli-chains.md` | `/Users/pantani/.codex/worktrees/complexity-cli-chains/relayer` | active; production file read-only |
-| cli-chains production | complexity-engineer | `cmd/chains.go` only | same worktree, after characterization approval | pending |
+| cli-chains characterization | complexity-characterization-engineer | characterization tests for `cmd/chains.go`; `_workspace/complexity/characterization/cli-chains.md` | `/Users/pantani/.codex/worktrees/complexity-cli-chains/relayer` | completed; 20 scenarios, 21 focused/race checks, package 159 pass |
+| cli-chains production | complexity-engineer | `cmd/chains.go` only | same worktree, after characterization approval | active; tests and campaign state read-only |
 | cli-chains review | complexity-verifier | `_workspace/complexity/reviews/cli-chains.md` only | same worktree under exclusive sequential lease | pending |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
