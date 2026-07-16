@@ -403,6 +403,20 @@ func (pcp *PenumbraChainProcessor) queryCycle(ctx context.Context, persistence *
 		return nil
 	}
 
+	pcp.publishCacheData(ctx, chainID, latestHeader, ibcMessagesCache, ibcHeaderCache)
+
+	persistence.latestQueriedBlock = newLatestQueriedBlock
+
+	return nil
+}
+
+func (pcp *PenumbraChainProcessor) publishCacheData(
+	ctx context.Context,
+	chainID string,
+	latestHeader provider.TendermintIBCHeader,
+	ibcMessagesCache processor.IBCMessagesCache,
+	ibcHeaderCache processor.IBCHeaderCache,
+) {
 	for _, pp := range pcp.pathProcessors {
 		clientID := pp.RelevantClientID(chainID)
 		clientState, err := pcp.clientState(ctx, clientID)
@@ -414,7 +428,7 @@ func (pcp *PenumbraChainProcessor) queryCycle(ctx context.Context, persistence *
 			continue
 		}
 
-		pp.HandleNewData(chainID, processor.ChainProcessorCacheData{
+		if err := pp.HandleNewDataContext(ctx, chainID, processor.ChainProcessorCacheData{
 			LatestBlock:          pcp.latestBlock,
 			LatestHeader:         latestHeader,
 			IBCMessagesCache:     ibcMessagesCache.Clone(),
@@ -423,10 +437,8 @@ func (pcp *PenumbraChainProcessor) queryCycle(ctx context.Context, persistence *
 			ConnectionStateCache: pcp.connectionStateCache.FilterForClient(clientID),
 			ChannelStateCache:    pcp.channelStateCache.FilterForClient(clientID, pcp.channelConnections, pcp.connectionClients),
 			IBCHeaderCache:       ibcHeaderCache.Clone(),
-		})
+		}); err != nil {
+			return
+		}
 	}
-
-	persistence.latestQueriedBlock = newLatestQueriedBlock
-
-	return nil
 }

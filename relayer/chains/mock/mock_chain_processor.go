@@ -108,9 +108,22 @@ func (mcp *MockChainProcessor) Run(ctx context.Context, initialBlockHistory uint
 }
 
 func (mcp *MockChainProcessor) queryCycle(ctx context.Context, persistence *queryCyclePersistence) {
-	// would be query of latest height
 	persistence.latestHeight++
+	mcp.updateSyncState(persistence)
+	mcp.log.Debug("queried latest height",
+		zap.String("chain_id", mcp.chainID),
+		zap.Int64("latest_height", persistence.latestHeight),
+	)
 
+	for i := persistence.latestQueriedBlock + 1; i <= persistence.latestHeight; i++ {
+		if !mcp.publishCacheData(ctx, mcp.cacheDataForBlock(i)) {
+			return
+		}
+		persistence.latestQueriedBlock = i
+	}
+}
+
+func (mcp *MockChainProcessor) updateSyncState(persistence *queryCyclePersistence) {
 	if !mcp.inSync {
 		if (persistence.latestHeight - persistence.latestQueriedBlock) < inSyncNumBlocksThreshold {
 			mcp.inSync = true
@@ -123,69 +136,44 @@ func (mcp *MockChainProcessor) queryCycle(ctx context.Context, persistence *quer
 			)
 		}
 	}
+}
 
-	mcp.log.Debug("queried latest height",
-		zap.String("chain_id", mcp.chainID),
-		zap.Int64("latest_height", persistence.latestHeight),
-	)
-
-	for i := persistence.latestQueriedBlock + 1; i <= persistence.latestHeight; i++ {
-		// fetch light block
-
-		// store light block's latest signed header and validatorset on chainProcessor if i == latestHeight, needed for constructing MsgUpdateClient on counterparty chain
-		// cache last n validatorsets also since needed for constructing MsgUpdateClient for this chain
-
-		// fetch block
-
-		// used for collecting IBC messages that will be sent to the Path Processors
-		ibcMessagesCache := processor.NewIBCMessagesCache()
-
-		// iterate through transactions
-		// iterate through messages in transactions
-		// get slice of all IBC messages in those transactions
-
-		// for _, tx := range blockRes.TxsResults {
-		//   if tx.Code != 0 {
-		//     // tx was not successful
-		//     continue
-		//   }
-		messages := mcp.getMockMessages()
-
-		// iterate through ibc messages and call specific handler for each
-		// will do things like mutate chainprocessor state and add relevant messages to foundMessages
-		// this can be parallelized also
-		for _, m := range messages {
-			if handler, ok := messageHandlers[m.EventType]; ok {
-				handler(msgHandlerParams{
-					height:           i,
-					mcp:              mcp,
-					packetInfo:       m.PacketInfo,
-					ibcMessagesCache: ibcMessagesCache,
-				})
-			}
-		}
-		// }
-
-		channelStateCache := make(processor.ChannelStateCache)
-
-		// mocking all channels open
-		for channelKey := range ibcMessagesCache.PacketFlow {
-			channelStateCache.SetOpen(channelKey, true, chantypes.NONE)
-		}
-
-		// now pass foundMessages to the path processors
-		for _, pp := range mcp.pathProcessors {
-			mcp.log.Info("sending messages to path processor", zap.String("chain_id", mcp.chainID))
-			pp.HandleNewData(mcp.chainID, processor.ChainProcessorCacheData{
-				LatestBlock: provider.LatestBlock{
-					Height: uint64(i),
-					Time:   time.Now(),
-				},
-				IBCMessagesCache:  ibcMessagesCache,
-				InSync:            mcp.inSync,
-				ChannelStateCache: channelStateCache,
+func (mcp *MockChainProcessor) cacheDataForBlock(height int64) processor.ChainProcessorCacheData {
+	ibcMessagesCache := processor.NewIBCMessagesCache()
+	for _, message := range mcp.getMockMessages() {
+		if handler, ok := messageHandlers[message.EventType]; ok {
+			handler(msgHandlerParams{
+				height:           height,
+				mcp:              mcp,
+				packetInfo:       message.PacketInfo,
+				ibcMessagesCache: ibcMessagesCache,
 			})
 		}
-		persistence.latestQueriedBlock = i
 	}
+	channelStateCache := make(processor.ChannelStateCache)
+	for channelKey := range ibcMessagesCache.PacketFlow {
+		channelStateCache.SetOpen(channelKey, true, chantypes.NONE)
+	}
+	return processor.ChainProcessorCacheData{
+		LatestBlock: provider.LatestBlock{
+			Height: uint64(height),
+			Time:   time.Now(),
+		},
+		IBCMessagesCache:  ibcMessagesCache,
+		InSync:            mcp.inSync,
+		ChannelStateCache: channelStateCache,
+	}
+}
+
+func (mcp *MockChainProcessor) publishCacheData(
+	ctx context.Context,
+	cacheData processor.ChainProcessorCacheData,
+) bool {
+	for _, pp := range mcp.pathProcessors {
+		mcp.log.Info("sending messages to path processor", zap.String("chain_id", mcp.chainID))
+		if err := pp.HandleNewDataContext(ctx, mcp.chainID, cacheData); err != nil {
+			return false
+		}
+	}
+	return true
 }
