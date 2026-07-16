@@ -13,7 +13,7 @@ Base: `origin/main@4c1029d1177f797f11bcd560f14a18305a2e7353`
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-characterization-engineer` is the only `ACTIVE` editor for cli-start characterization. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-engineer` is the only `ACTIVE` editor for cli-start production. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
@@ -25,8 +25,8 @@ Exclusive worktree lease: `complexity-characterization-engineer` is the only `AC
 | cli-config characterization | complexity-characterization-engineer | characterization tests for `cmd/config.go` and `cmd/appstate.go`; `_workspace/complexity/characterization/cli-config.md` | `/Users/pantani/.codex/worktrees/complexity-cli-config/relayer` | completed; 31 focused cases and race pass |
 | cli-config production | complexity-engineer | `cmd/config.go`, `cmd/appstate.go` only | same worktree, after characterization approval | completed; projected `62/102/105` |
 | cli-config review | complexity-verifier | `_workspace/complexity/reviews/cli-config.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
-| cli-start characterization | complexity-characterization-engineer | characterization tests for `cmd/start.go` and `cmd/flags.go`; `_workspace/complexity/characterization/cli-start.md` | `/Users/pantani/.codex/worktrees/complexity-cli-start/relayer` | active; production files read-only |
-| cli-start production | complexity-engineer | `cmd/start.go`, `cmd/flags.go` only | same worktree, after characterization approval | pending |
+| cli-start characterization | complexity-characterization-engineer | characterization tests for `cmd/start.go` and `cmd/flags.go`; `_workspace/complexity/characterization/cli-start.md` | `/Users/pantani/.codex/worktrees/complexity-cli-start/relayer` | completed; 20 scenarios, 47 focused/race checks, package 138 pass |
+| cli-start production | complexity-engineer | `cmd/start.go`, `cmd/flags.go` only | same worktree, after characterization approval | active; tests and campaign state read-only |
 | cli-start review | complexity-verifier | `_workspace/complexity/reviews/cli-start.md` only | same worktree under exclusive sequential lease | pending |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
