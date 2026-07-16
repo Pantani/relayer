@@ -19,11 +19,11 @@ Base: `origin/main@43612fc928c447d70c7179b21912e38c55761cfa`
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-verifier` is the only `ACTIVE` editor for provider-liveliness review evidence. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-orchestrator` is the only `ACTIVE` editor for provider-liveliness integration and publication. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
-| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md`, `_workspace/complexity/plan.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-providers-liveliness/relayer` | idle during exclusive provider-liveliness characterization lease; branch based on #17 head |
+| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md`, `_workspace/complexity/plan.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-providers-liveliness/relayer` | active; integrating approved provider-liveliness subwave |
 | cli-version characterization | complexity-characterization-engineer | `cmd/version_test.go`, `_workspace/complexity/characterization/cli-version.md` | same worktree under exclusive sequential lease | completed |
 | cli-version production | complexity-engineer | `cmd/version.go` only | same worktree, after characterization and harness approval | completed |
 | cli-version review | complexity-verifier | `_workspace/complexity/reviews/cli-version.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
@@ -51,6 +51,6 @@ Exclusive worktree lease: `complexity-verifier` is the only `ACTIVE` editor for 
 | cli-tx review | complexity-verifier | `_workspace/complexity/reviews/cli-tx.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
 | provider-liveliness characterization | complexity-characterization-engineer | tests for Cosmos/Penumbra `provider.go`; `_workspace/complexity/characterization/provider-liveliness.md` | `/Users/pantani/.codex/worktrees/complexity-providers-liveliness/relayer` | completed; 16 focused/race checks, packages 55 pass, tests max `4/4` |
 | provider-liveliness production | complexity-engineer | `relayer/chains/cosmos/provider.go`, `relayer/chains/penumbra/provider.go` only | same worktree, after characterization approval | completed; targets `5/6, 7/9`, helpers `5/7`, files max `8/9` |
-| provider-liveliness review | complexity-verifier | `_workspace/complexity/reviews/provider-liveliness.md` only | same worktree under exclusive sequential lease | active; production and characterization read-only |
+| provider-liveliness review | complexity-verifier | `_workspace/complexity/reviews/provider-liveliness.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
