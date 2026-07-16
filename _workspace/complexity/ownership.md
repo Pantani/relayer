@@ -15,6 +15,7 @@ Base: `origin/main@4c1029d1177f797f11bcd560f14a18305a2e7353`
 | [#14](https://github.com/Pantani/relayer/pull/14) (draft) | `Pantani/cx/complexity-cli-paths@714750d` | `cmd/paths.go`, characterization/state | direct base for cli-feegrant; no collision with #9/#10/#11/#12/#13 |
 | [#15](https://github.com/Pantani/relayer/pull/15) (draft) | `Pantani/cx/complexity-cli-feegrant@7b5e7d1` | `cmd/feegrant.go`, characterization/state | direct base for cli-query; no collision with #9/#10/#11/#12/#13/#14 |
 | [#16](https://github.com/Pantani/relayer/pull/16) (draft) | `Pantani/cx/complexity-cli-query@e59c4a2` | `cmd/query.go`, characterization/state | direct base for cli-tx; no collision with #9/#10/#11/#12/#13/#14/#15 |
+| [#17](https://github.com/Pantani/relayer/pull/17) (draft) | `Pantani/cx/complexity-cli-tx` | `cmd/tx.go`, characterization/state | campaign subwave; no collision with #9/#10/#11/#12/#13/#14/#15/#16 |
 
 ## Campaign ownership
 
@@ -22,7 +23,7 @@ Exclusive worktree lease: `complexity-orchestrator` is the only `ACTIVE` editor 
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
-| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md`, `_workspace/complexity/plan.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-cli-tx/relayer` | active; integrating approved cli-tx subwave |
+| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md`, `_workspace/complexity/plan.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-cli-tx/relayer` | active; PR #17 published as draft |
 | cli-version characterization | complexity-characterization-engineer | `cmd/version_test.go`, `_workspace/complexity/characterization/cli-version.md` | same worktree under exclusive sequential lease | completed |
 | cli-version production | complexity-engineer | `cmd/version.go` only | same worktree, after characterization and harness approval | completed |
 | cli-version review | complexity-verifier | `_workspace/complexity/reviews/cli-version.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
