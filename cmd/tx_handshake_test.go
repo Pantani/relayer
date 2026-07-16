@@ -5,10 +5,12 @@ import (
 	"time"
 
 	"github.com/cosmos/relayer/v2/relayer"
+	"github.com/cosmos/relayer/v2/relayer/protocol"
 	"github.com/cosmos/relayer/v2/relayer/provider"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 type keyCheckingProvider struct {
@@ -153,6 +155,52 @@ func TestClientIDForPath(t *testing.T) {
 	srcID, dstID = clientIDForPath(path, "chain-b", "07-tendermint-20")
 	require.Empty(t, srcID)
 	require.Equal(t, "07-tendermint-20", dstID)
+}
+
+func TestResolveSingleClientPathRejectsV2BeforePathMutation(t *testing.T) {
+	t.Parallel()
+
+	src := relayer.NewChain(zap.NewNop(), &keyCheckingProvider{chainID: "chain-a-1"}, false)
+	dst := relayer.NewChain(zap.NewNop(), &keyCheckingProvider{chainID: "chain-b-1"}, false)
+	config := Config{
+		Chains: relayer.Chains{
+			"chain-a": src,
+			"chain-b": dst,
+		},
+		Paths: relayer.Paths{
+			"v2-path": {
+				Protocol: protocol.ProtocolV2,
+				Src:      &relayer.PathEnd{ChainID: "chain-a-1"},
+				Dst:      &relayer.PathEnd{ChainID: "chain-b-1"},
+			},
+		},
+	}
+
+	gotSrc, gotDst, path, err := resolveSingleClientPath(&config, []string{"chain-a", "chain-b", "v2-path"})
+
+	require.ErrorIs(t, err, relayer.ErrV2RuntimeNotImplemented)
+	require.Nil(t, gotSrc)
+	require.Nil(t, gotDst)
+	require.Nil(t, path)
+	require.Nil(t, src.PathEnd)
+	require.Nil(t, dst.PathEnd)
+}
+
+func TestLinkChainsForPathRejectsV2BeforeChainLookup(t *testing.T) {
+	t.Parallel()
+
+	config := Config{Paths: relayer.Paths{
+		"v2-path": {
+			Protocol: protocol.ProtocolV2,
+			Src:      &relayer.PathEnd{ChainID: "chain-a-1"},
+			Dst:      &relayer.PathEnd{ChainID: "chain-b-1"},
+		},
+	}}
+
+	pair, err := linkChainsForPath(&config, "v2-path")
+
+	require.ErrorIs(t, err, relayer.ErrV2RuntimeNotImplemented)
+	require.Empty(t, pair)
 }
 
 func TestEnsureSelectedChainKeysPreservesErrors(t *testing.T) {

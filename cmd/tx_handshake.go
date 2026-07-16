@@ -204,6 +204,9 @@ func resolveSingleClientPath(config *Config, args []string) (*relayer.Chain, *re
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	if err := path.EnsureClassicRuntime(); err != nil {
+		return nil, nil, nil, err
+	}
 
 	src.PathEnd = path.End(src.ChainID())
 	dst.PathEnd = path.End(dst.ChainID())
@@ -462,6 +465,9 @@ func chainsForPath(config *Config, pathName string) (commandChainPair, error) {
 func linkChainsForPath(config *Config, pathName string) (commandChainPair, error) {
 	path, err := config.Paths.Get(pathName)
 	if err != nil {
+		return commandChainPair{}, err
+	}
+	if err := path.EnsureClassicRuntime(); err != nil {
 		return commandChainPair{}, err
 	}
 	src, dst := path.Src.ChainID, path.Dst.ChainID
