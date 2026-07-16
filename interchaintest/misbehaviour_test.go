@@ -20,7 +20,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/std"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/cosmos/gogoproto/proto"
 	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
 	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
 	"github.com/cosmos/ibc-go/v11/modules/core/exported"
@@ -234,10 +233,7 @@ func broadcastClientUpdate(
 ) {
 	t.Helper()
 
-	message, ok := clientMessage.(proto.Message)
-	require.True(t, ok)
-
-	protoAny, err := codectypes.NewAnyWithValue(message)
+	protoAny, err := clienttypes.PackClientMessage(clientMessage)
 	require.NoError(t, err)
 
 	msg := &clienttypes.MsgUpdateClient{

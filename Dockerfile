@@ -4,7 +4,7 @@ RUN apk add --update --no-cache curl make git libc-dev bash gcc linux-headers eu
 
 ARG TARGETARCH
 
-ADD . .
+COPY . .
 
 RUN GOOS=linux GOARCH=$TARGETARCH CGO_ENABLED=1 \
     LDFLAGS='-linkmode external -extldflags "-static"' make install
