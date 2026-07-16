@@ -260,20 +260,28 @@ func (a *appState) updatePathConfig(
 		if !ok {
 			return fmt.Errorf("config does not exist for that path: %s", pathName)
 		}
-		if clientSrc != "" {
-			path.Src.ClientID = clientSrc
-		}
-		if clientDst != "" {
-			path.Dst.ClientID = clientDst
-		}
-		if connectionSrc != "" {
-			path.Src.ConnectionID = connectionSrc
-		}
-		if connectionDst != "" {
-			path.Dst.ConnectionID = connectionDst
-		}
+		applyPathConfigUpdate(path, clientSrc, clientDst, connectionSrc, connectionDst)
 		return nil
 	})
+}
+
+func applyPathConfigUpdate(
+	path *relayer.Path,
+	clientSrc, clientDst string,
+	connectionSrc, connectionDst string,
+) {
+	if clientSrc != "" {
+		path.Src.ClientID = clientSrc
+	}
+	if clientDst != "" {
+		path.Dst.ClientID = clientDst
+	}
+	if connectionSrc != "" {
+		path.Src.ConnectionID = connectionSrc
+	}
+	if connectionDst != "" {
+		path.Dst.ConnectionID = connectionDst
+	}
 }
 
 func (a *appState) useKey(chainName, key string) error {

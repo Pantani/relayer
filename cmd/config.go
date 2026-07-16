@@ -65,49 +65,64 @@ func configShowCmd(a *appState) *cobra.Command {
 $ %s config show --home %s
 $ %s cfg list`, appName, defaultHome, appName)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := cmd.Flags().GetString(flagHome)
-			if err != nil {
-				return err
-			}
-
-			cfgPath := path.Join(home, "config", "config.yaml")
-			if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-				if _, err := os.Stat(home); os.IsNotExist(err) {
-					return fmt.Errorf("home path does not exist: %s", home)
-				}
-				return fmt.Errorf("config does not exist: %s", cfgPath)
-			}
-
-			jsn, err := cmd.Flags().GetBool(flagJSON)
-			if err != nil {
-				return err
-			}
-			yml, err := cmd.Flags().GetBool(flagYAML)
-			if err != nil {
-				return err
-			}
-			switch {
-			case yml && jsn:
-				return errors.New("can't pass both --json and --yaml, must pick one")
-			case jsn:
-				out, err := json.Marshal(a.config.Wrapped())
-				if err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(out))
-				return nil
-			default:
-				out, err := yaml.Marshal(a.config.Wrapped())
-				if err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), string(out))
-				return nil
-			}
+			return showConfig(a, cmd)
 		},
 	}
 
 	return yamlFlag(a.viper, jsonFlag(a.viper, cmd))
+}
+
+func showConfig(a *appState, cmd *cobra.Command) error {
+	home, err := cmd.Flags().GetString(flagHome)
+	if err != nil {
+		return err
+	}
+	if err := checkConfigShowPath(home); err != nil {
+		return err
+	}
+
+	jsn, err := cmd.Flags().GetBool(flagJSON)
+	if err != nil {
+		return err
+	}
+	yml, err := cmd.Flags().GetBool(flagYAML)
+	if err != nil {
+		return err
+	}
+	if yml && jsn {
+		return errors.New("can't pass both --json and --yaml, must pick one")
+	}
+
+	return writeConfigOutput(cmd.OutOrStdout(), a.config.Wrapped(), jsn)
+}
+
+func checkConfigShowPath(home string) error {
+	cfgPath := path.Join(home, "config", "config.yaml")
+	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
+		return nil
+	}
+	if _, err := os.Stat(home); os.IsNotExist(err) {
+		return fmt.Errorf("home path does not exist: %s", home)
+	}
+	return fmt.Errorf("config does not exist: %s", cfgPath)
+}
+
+func writeConfigOutput(output io.Writer, config *ConfigOutputWrapper, jsn bool) error {
+	var (
+		out []byte
+		err error
+	)
+	if jsn {
+		out, err = json.Marshal(config)
+	} else {
+		out, err = yaml.Marshal(config)
+	}
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(output, string(out))
+	return nil
 }
 
 // Command for initializing an empty config at the --home location
@@ -121,55 +136,53 @@ func configInitCmd(a *appState) *cobra.Command {
 $ %s config init --home %s
 $ %s cfg i`, appName, defaultHome, appName)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := cmd.Flags().GetString(flagHome)
-			if err != nil {
-				return err
-			}
-
-			cfgDir := path.Join(home, "config")
-			cfgPath := path.Join(cfgDir, "config.yaml")
-
-			// If the config doesn't exist...
-			if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-				// And the config folder doesn't exist...
-				if _, err := os.Stat(cfgDir); os.IsNotExist(err) {
-					// And the home folder doesn't exist
-					if _, err := os.Stat(home); os.IsNotExist(err) {
-						// Create the home folder
-						if err = os.Mkdir(home, os.ModePerm); err != nil {
-							return err
-						}
-					}
-					// Create the home config folder
-					if err = os.Mkdir(cfgDir, os.ModePerm); err != nil {
-						return err
-					}
-				}
-
-				// Then create the file...
-				f, err := os.Create(cfgPath)
-				if err != nil {
-					return err
-				}
-				defer f.Close()
-
-				memo, _ := cmd.Flags().GetString(flagMemo)
-
-				// And write the default config to that location...
-				if _, err = f.Write(defaultConfigYAML(memo)); err != nil {
-					return err
-				}
-
-				// And return no error...
-				return nil
-			}
-
-			// Otherwise, the config file exists, and an error is returned...
-			return fmt.Errorf("config already exists: %s", cfgPath)
+			return initializeConfig(cmd)
 		},
 	}
 	cmd = memoFlag(a.viper, cmd)
 	return cmd
+}
+
+func initializeConfig(cmd *cobra.Command) error {
+	home, err := cmd.Flags().GetString(flagHome)
+	if err != nil {
+		return err
+	}
+
+	cfgDir := path.Join(home, "config")
+	cfgPath := path.Join(cfgDir, "config.yaml")
+	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
+		return fmt.Errorf("config already exists: %s", cfgPath)
+	}
+	if err := ensureConfigDirectory(home, cfgDir); err != nil {
+		return err
+	}
+
+	return writeDefaultConfig(cmd, cfgPath)
+}
+
+func ensureConfigDirectory(home, cfgDir string) error {
+	if _, err := os.Stat(cfgDir); !os.IsNotExist(err) {
+		return nil
+	}
+	if _, err := os.Stat(home); os.IsNotExist(err) {
+		if err := os.Mkdir(home, os.ModePerm); err != nil {
+			return err
+		}
+	}
+	return os.Mkdir(cfgDir, os.ModePerm)
+}
+
+func writeDefaultConfig(cmd *cobra.Command, cfgPath string) error {
+	f, err := os.Create(cfgPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	memo, _ := cmd.Flags().GetString(flagMemo)
+	_, err = f.Write(defaultConfigYAML(memo))
+	return err
 }
 
 // addChainsFromDirectory finds all JSON-encoded config files in dir,
@@ -187,42 +200,46 @@ func addChainsFromDirectory(ctx context.Context, stderr io.Writer, a *appState, 
 
 	return a.performConfigLockingOperation(ctx, func() error {
 		for _, f := range files {
-			pth := filepath.Join(dir, f.Name())
-			if f.IsDir() {
-				fmt.Fprintf(stderr, "directory at %s, skipping...\n", pth)
-				continue
-			}
-
-			byt, err := os.ReadFile(pth)
-			if err != nil {
-				fmt.Fprintf(stderr, "failed to read file %s. Err: %v skipping...\n", pth, err)
-				continue
-			}
-
-			var pcw ProviderConfigWrapper
-			if err = json.Unmarshal(byt, &pcw); err != nil {
-				fmt.Fprintf(stderr, "failed to unmarshal file %s. Err: %v skipping...\n", pth, err)
-				continue
-			}
-			chainName := strings.Split(f.Name(), ".")[0]
-			prov, err := pcw.Value.NewProvider(
-				a.log.With(zap.String("provider_type", pcw.Type)),
-				a.homePath, a.debug, chainName,
-			)
-			if err != nil {
-				fmt.Fprintf(stderr, "failed to build ChainProvider for %s. Err: %v \n", pth, err)
-				continue
-			}
-
-			c := relayer.NewChain(a.log, prov, a.debug)
-			if err = a.config.AddChain(c); err != nil {
-				fmt.Fprintf(stderr, "failed to add chain %s: %v \n", pth, err)
-				continue
-			}
-			fmt.Fprintf(stderr, "added chain %s...\n", c.ChainProvider.ChainId())
+			addChainConfigFile(stderr, a, dir, f)
 		}
 		return nil
 	})
+}
+
+func addChainConfigFile(stderr io.Writer, a *appState, dir string, file os.FileInfo) {
+	pth := filepath.Join(dir, file.Name())
+	if file.IsDir() {
+		fmt.Fprintf(stderr, "directory at %s, skipping...\n", pth)
+		return
+	}
+
+	byt, err := os.ReadFile(pth)
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to read file %s. Err: %v skipping...\n", pth, err)
+		return
+	}
+
+	var pcw ProviderConfigWrapper
+	if err = json.Unmarshal(byt, &pcw); err != nil {
+		fmt.Fprintf(stderr, "failed to unmarshal file %s. Err: %v skipping...\n", pth, err)
+		return
+	}
+	chainName := strings.Split(file.Name(), ".")[0]
+	prov, err := pcw.Value.NewProvider(
+		a.log.With(zap.String("provider_type", pcw.Type)),
+		a.homePath, a.debug, chainName,
+	)
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to build ChainProvider for %s. Err: %v \n", pth, err)
+		return
+	}
+
+	c := relayer.NewChain(a.log, prov, a.debug)
+	if err = a.config.AddChain(c); err != nil {
+		fmt.Fprintf(stderr, "failed to add chain %s: %v \n", pth, err)
+		return
+	}
+	fmt.Fprintf(stderr, "added chain %s...\n", c.ChainProvider.ChainId())
 }
 
 // addPathsFromDirectory parses all the files containing JSON-encoded paths in dir,
@@ -238,36 +255,48 @@ func addPathsFromDirectory(ctx context.Context, stderr io.Writer, a *appState, d
 	}
 	return a.performConfigLockingOperation(ctx, func() error {
 		for _, f := range files {
-			pth := filepath.Join(dir, f.Name())
-			if f.IsDir() {
-				fmt.Fprintf(stderr, "directory at %s, skipping...\n", pth)
-				continue
+			if err := addPathConfigFile(ctx, stderr, a, dir, f); err != nil {
+				return err
 			}
-
-			byt, err := os.ReadFile(pth)
-			if err != nil {
-				return fmt.Errorf("failed to read file %s: %w", pth, err)
-			}
-
-			p := &relayer.Path{}
-			if err = json.Unmarshal(byt, p); err != nil {
-				return fmt.Errorf("failed to unmarshal file %s: %w", pth, err)
-			}
-
-			pthName := strings.Split(f.Name(), ".")[0]
-			if err := a.config.ValidatePath(ctx, stderr, p); err != nil {
-				return fmt.Errorf("failed to validate path %s: %w", pth, err)
-			}
-
-			if err := a.config.AddPath(pthName, p); err != nil {
-				return fmt.Errorf("failed to add path %s: %w", pth, err)
-			}
-
-			fmt.Fprintf(stderr, "added path %s...\n\n", pthName)
 		}
 
 		return nil
 	})
+}
+
+func addPathConfigFile(
+	ctx context.Context,
+	stderr io.Writer,
+	a *appState,
+	dir string,
+	file os.FileInfo,
+) error {
+	pth := filepath.Join(dir, file.Name())
+	if file.IsDir() {
+		fmt.Fprintf(stderr, "directory at %s, skipping...\n", pth)
+		return nil
+	}
+
+	byt, err := os.ReadFile(pth)
+	if err != nil {
+		return fmt.Errorf("failed to read file %s: %w", pth, err)
+	}
+
+	p := &relayer.Path{}
+	if err = json.Unmarshal(byt, p); err != nil {
+		return fmt.Errorf("failed to unmarshal file %s: %w", pth, err)
+	}
+
+	pthName := strings.Split(file.Name(), ".")[0]
+	if err := a.config.ValidatePath(ctx, stderr, p); err != nil {
+		return fmt.Errorf("failed to validate path %s: %w", pth, err)
+	}
+	if err := a.config.AddPath(pthName, p); err != nil {
+		return fmt.Errorf("failed to add path %s: %w", pth, err)
+	}
+
+	fmt.Fprintf(stderr, "added path %s...\n\n", pthName)
+	return nil
 }
 
 // Wrapped converts the Config struct into a ConfigOutputWrapper struct
