@@ -15,7 +15,7 @@ Base: `origin/main@4c1029d1177f797f11bcd560f14a18305a2e7353`
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-engineer` is the only `ACTIVE` editor for cli-paths production. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-characterization-engineer` is the only `ACTIVE` editor for cli-paths test-complexity cleanup. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
@@ -33,8 +33,8 @@ Exclusive worktree lease: `complexity-engineer` is the only `ACTIVE` editor for 
 | cli-chains characterization | complexity-characterization-engineer | characterization tests for `cmd/chains.go`; `_workspace/complexity/characterization/cli-chains.md` | `/Users/pantani/.codex/worktrees/complexity-cli-chains/relayer` | completed; 20 scenarios, 21 focused/race checks, package 159 pass |
 | cli-chains production | complexity-engineer | `cmd/chains.go` only | same worktree, after characterization approval | completed; targets `1/0, 1/0, 1/0, 1/0, 5/3`; helpers max `8/8` |
 | cli-chains review | complexity-verifier | `_workspace/complexity/reviews/cli-chains.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
-| cli-paths characterization | complexity-characterization-engineer | characterization tests for `cmd/paths.go`; `_workspace/complexity/characterization/cli-paths.md` | `/Users/pantani/.codex/worktrees/complexity-cli-paths/relayer` | completed; 20 scenarios, 25 focused/race checks, package 184 pass |
-| cli-paths production | complexity-engineer | `cmd/paths.go` only | same worktree, after characterization approval | active; tests and campaign state read-only |
+| cli-paths characterization | complexity-characterization-engineer | `cmd/paths_characterization_test.go`; `_workspace/complexity/characterization/cli-paths.md` | `/Users/pantani/.codex/worktrees/complexity-cli-paths/relayer` | active cleanup; remove introduced `5/13` test violation without changing assertions |
+| cli-paths production | complexity-engineer | `cmd/paths.go` only | same worktree, after characterization approval | completed; five targets `1/0`, helpers max `10/9`; production read-only |
 | cli-paths review | complexity-verifier | `_workspace/complexity/reviews/cli-paths.md` only | same worktree under exclusive sequential lease | pending |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
