@@ -219,43 +219,48 @@ func (c ChainInfo) GetRandomRPCEndpoint(ctx context.Context, forceAdd bool) (str
 // GetBackupRPCEndpoints returns a slice of strings to be used as fallback, backup RPC endpoints. forceAdd will
 // force the use of all available RPC endpoints, regardless of health.
 func (c ChainInfo) GetBackupRPCEndpoints(ctx context.Context, forceAdd bool, primaryRPC string, count uint64) ([]string, error) {
-	// if force add, get all rpcs, otherwise get only healthy ones
-	var rpcs []string
-	var err error
-	if forceAdd {
-		rpcs, err = c.GetAllRPCEndpoints()
-	} else {
-		rpcs, err = c.GetRPCEndpoints(ctx)
-	}
+	rpcs, err := c.backupRPCCandidates(ctx, forceAdd)
 	if err != nil {
 		return nil, err
 	}
 
-	// if no rpcs, return error
 	if len(rpcs) == 0 {
-		if !forceAdd {
-			return nil, errors.New("no working RPCs found, consider using --force-add")
-		} else {
-			return nil, nil
-		}
+		return emptyBackupRPCEndpoints(forceAdd)
 	}
 
-	// Select first two endpoints
-	backupRpcs := []string{}
-	for _, endpoint := range rpcs {
-		if len(backupRpcs) < 2 && primaryRPC != endpoint {
-			backupRpcs = append(backupRpcs, endpoint)
-		} else {
-			break
-		}
-	}
+	backupRpcs := selectBackupRPCEndpoints(rpcs, primaryRPC)
 
-	// Log endpoints
 	c.log.Info("Backup Endpoints selected",
 		zap.String("chain_name", c.ChainName),
 		zap.Strings("endpoints", backupRpcs),
 	)
 	return backupRpcs, nil
+}
+
+func (c ChainInfo) backupRPCCandidates(ctx context.Context, forceAdd bool) ([]string, error) {
+	// If force add, get all RPCs; otherwise get only healthy ones.
+	if forceAdd {
+		return c.GetAllRPCEndpoints()
+	}
+	return c.GetRPCEndpoints(ctx)
+}
+
+func emptyBackupRPCEndpoints(forceAdd bool) ([]string, error) {
+	if forceAdd {
+		return nil, nil
+	}
+	return nil, errors.New("no working RPCs found, consider using --force-add")
+}
+
+func selectBackupRPCEndpoints(rpcs []string, primaryRPC string) []string {
+	backupRpcs := []string{}
+	for _, endpoint := range rpcs {
+		if len(backupRpcs) >= 2 || primaryRPC == endpoint {
+			break
+		}
+		backupRpcs = append(backupRpcs, endpoint)
+	}
+	return backupRpcs
 }
 
 // GetAssetList returns the asset metadata from the cosmos chain registry for this particular chain.
