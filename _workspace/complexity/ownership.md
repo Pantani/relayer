@@ -16,15 +16,15 @@ Base: `origin/main@43612fc928c447d70c7179b21912e38c55761cfa`
 | [#15](https://github.com/Pantani/relayer/pull/15) (draft) | `Pantani/cx/complexity-cli-feegrant@7b5e7d1` | `cmd/feegrant.go`, characterization/state | direct base for cli-query; no collision with #9/#10/#11/#12/#13/#14 |
 | [#16](https://github.com/Pantani/relayer/pull/16) (draft) | `Pantani/cx/complexity-cli-query` | `cmd/query.go`, characterization/state | merged updated #15; contains landed #9 |
 | [#17](https://github.com/Pantani/relayer/pull/17) (draft) | `Pantani/cx/complexity-cli-tx@412d681` | `cmd/tx.go`, characterization/state | direct base for provider liveliness; contains landed #9 |
-| [#18](https://github.com/Pantani/relayer/pull/18) (draft) | `Pantani/cx/complexity-providers-liveliness` | Cosmos/Penumbra `provider.go`, characterization/state | campaign subwave; based on #17 with landed #9 |
+| [#18](https://github.com/Pantani/relayer/pull/18) (draft) | `Pantani/cx/complexity-providers-liveliness@e36ad51` | Cosmos/Penumbra `provider.go`, characterization/state | direct base for message handlers; contains landed #9 |
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-orchestrator` is the only `ACTIVE` editor for provider-liveliness integration and publication. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-characterization-engineer` is the only `ACTIVE` editor for provider-message-handlers characterization. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
-| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md`, `_workspace/complexity/plan.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-providers-liveliness/relayer` | active; PR #18 published as draft |
+| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md`, `_workspace/complexity/plan.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-providers-message-handlers/relayer` | idle during exclusive message-handlers characterization lease; branch based on #18 head |
 | cli-version characterization | complexity-characterization-engineer | `cmd/version_test.go`, `_workspace/complexity/characterization/cli-version.md` | same worktree under exclusive sequential lease | completed |
 | cli-version production | complexity-engineer | `cmd/version.go` only | same worktree, after characterization and harness approval | completed |
 | cli-version review | complexity-verifier | `_workspace/complexity/reviews/cli-version.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
@@ -53,5 +53,8 @@ Exclusive worktree lease: `complexity-orchestrator` is the only `ACTIVE` editor 
 | provider-liveliness characterization | complexity-characterization-engineer | tests for Cosmos/Penumbra `provider.go`; `_workspace/complexity/characterization/provider-liveliness.md` | `/Users/pantani/.codex/worktrees/complexity-providers-liveliness/relayer` | completed; 16 focused/race checks, packages 55 pass, tests max `4/4` |
 | provider-liveliness production | complexity-engineer | `relayer/chains/cosmos/provider.go`, `relayer/chains/penumbra/provider.go` only | same worktree, after characterization approval | completed; targets `5/6, 7/9`, helpers `5/7`, files max `8/9` |
 | provider-liveliness review | complexity-verifier | `_workspace/complexity/reviews/provider-liveliness.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
+| provider-message-handlers characterization | complexity-characterization-engineer | tests for Cosmos/Penumbra `message_handlers.go`; `_workspace/complexity/characterization/provider-message-handlers.md` | `/Users/pantani/.codex/worktrees/complexity-providers-message-handlers/relayer` | active; production files read-only |
+| provider-message-handlers production | complexity-engineer | Cosmos/Penumbra `message_handlers.go` only | same worktree, after characterization approval | pending |
+| provider-message-handlers review | complexity-verifier | `_workspace/complexity/reviews/provider-message-handlers.md` only | same worktree under exclusive sequential lease | pending |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
