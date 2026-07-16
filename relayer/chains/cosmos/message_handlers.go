@@ -66,43 +66,57 @@ func (ccp *CosmosChainProcessor) handlePacketMessage(eventType string, pi provid
 func (ccp *CosmosChainProcessor) handleChannelMessage(eventType string, ci provider.ChannelInfo, ibcMessagesCache processor.IBCMessagesCache) {
 	ccp.channelConnections[ci.ChannelID] = ci.ConnID
 	channelKey := processor.ChannelInfoChannelKey(ci)
+	ccp.updateChannelState(eventType, ci, channelKey)
+	ibcMessagesCache.ChannelHandshake.Retain(channelKey, eventType, ci)
+	ccp.logChannelMessage(eventType, ci)
+}
 
+func (ccp *CosmosChainProcessor) updateChannelState(
+	eventType string,
+	ci provider.ChannelInfo,
+	channelKey processor.ChannelKey,
+) {
 	if eventType == chantypes.EventTypeChannelOpenInit {
-		found := false
-		for k := range ccp.channelStateCache {
-			// Don't add a channelKey to the channelStateCache without counterparty channel ID
-			// since we already have the channelKey in the channelStateCache which includes the
-			// counterparty channel ID.
-			if k.MsgInitKey() == channelKey {
-				found = true
-				break
-			}
-		}
-		if !found {
-			ccp.channelStateCache.SetOpen(channelKey, false, ci.Order)
-		}
-	} else {
-		switch eventType {
-		case chantypes.EventTypeChannelOpenTry:
-			ccp.channelStateCache.SetOpen(channelKey, false, ci.Order)
-		case chantypes.EventTypeChannelOpenAck, chantypes.EventTypeChannelOpenConfirm:
-			ccp.channelStateCache.SetOpen(channelKey, true, ci.Order)
-			ccp.logChannelOpenMessage(eventType, ci)
-		case chantypes.EventTypeChannelClosed, chantypes.EventTypeChannelCloseConfirm:
-			for k := range ccp.channelStateCache {
-				if k.PortID == ci.PortID && k.ChannelID == ci.ChannelID {
-					ccp.channelStateCache.SetOpen(channelKey, false, ci.Order)
-					break
-				}
-			}
-		}
-		// Clear out MsgInitKeys once we have the counterparty channel ID
-		delete(ccp.channelStateCache, channelKey.MsgInitKey())
+		ccp.retainChannelOpenInit(channelKey, ci)
+		return
 	}
 
-	ibcMessagesCache.ChannelHandshake.Retain(channelKey, eventType, ci)
+	switch eventType {
+	case chantypes.EventTypeChannelOpenTry:
+		ccp.channelStateCache.SetOpen(channelKey, false, ci.Order)
+	case chantypes.EventTypeChannelOpenAck, chantypes.EventTypeChannelOpenConfirm:
+		ccp.channelStateCache.SetOpen(channelKey, true, ci.Order)
+		ccp.logChannelOpenMessage(eventType, ci)
+	case chantypes.EventTypeChannelClosed, chantypes.EventTypeChannelCloseConfirm:
+		ccp.closeChannelIfPresent(channelKey, ci)
+	}
+	// Clear out MsgInitKeys once we have the counterparty channel ID.
+	delete(ccp.channelStateCache, channelKey.MsgInitKey())
+}
 
-	ccp.logChannelMessage(eventType, ci)
+func (ccp *CosmosChainProcessor) retainChannelOpenInit(
+	channelKey processor.ChannelKey,
+	ci provider.ChannelInfo,
+) {
+	for key := range ccp.channelStateCache {
+		// Don't add an init key when the full counterparty key is present.
+		if key.MsgInitKey() == channelKey {
+			return
+		}
+	}
+	ccp.channelStateCache.SetOpen(channelKey, false, ci.Order)
+}
+
+func (ccp *CosmosChainProcessor) closeChannelIfPresent(
+	channelKey processor.ChannelKey,
+	ci provider.ChannelInfo,
+) {
+	for key := range ccp.channelStateCache {
+		if key.PortID == ci.PortID && key.ChannelID == ci.ChannelID {
+			ccp.channelStateCache.SetOpen(channelKey, false, ci.Order)
+			return
+		}
+	}
 }
 
 func (ccp *CosmosChainProcessor) handleConnectionMessage(eventType string, ci provider.ConnectionInfo, ibcMessagesCache processor.IBCMessagesCache) {
