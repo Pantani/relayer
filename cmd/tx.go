@@ -8,6 +8,7 @@ import (
 	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
 	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
 	"github.com/cosmos/relayer/v2/relayer"
 	"github.com/cosmos/relayer/v2/relayer/processor"
@@ -210,71 +211,7 @@ $ %s tx chan demo-path --timeout 5s --max-retries 10`,
 			appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pathName := args[0]
-
-			c, src, dst, err := a.config.ChainsFromPath(pathName)
-			if err != nil {
-				return err
-			}
-
-			override, err := cmd.Flags().GetBool(flagOverride)
-			if err != nil {
-				return err
-			}
-
-			srcPort, err := cmd.Flags().GetString(flagSrcPort)
-			if err != nil {
-				return err
-			}
-
-			dstPort, err := cmd.Flags().GetString(flagDstPort)
-			if err != nil {
-				return err
-			}
-
-			order, err := cmd.Flags().GetString(flagOrder)
-			if err != nil {
-				return err
-			}
-
-			version, err := cmd.Flags().GetString(flagVersion)
-			if err != nil {
-				return err
-			}
-
-			to, err := getTimeout(cmd)
-			if err != nil {
-				return err
-			}
-
-			retries, err := cmd.Flags().GetUint64(flagMaxRetries)
-			if err != nil {
-				return err
-			}
-
-			// ensure that keys exist
-			if exists := c[src].ChainProvider.KeyExists(c[src].ChainProvider.Key()); !exists {
-				return fmt.Errorf("key %s not found on src chain %s", c[src].ChainProvider.Key(), c[src].ChainID())
-			}
-
-			if exists := c[dst].ChainProvider.KeyExists(c[dst].ChainProvider.Key()); !exists {
-				return fmt.Errorf("key %s not found on dst chain %s", c[dst].ChainProvider.Key(), c[dst].ChainID())
-			}
-
-			// create channel if it isn't already created
-			return c[src].CreateOpenChannels(
-				cmd.Context(),
-				c[dst],
-				retries,
-				to,
-				srcPort,
-				dstPort,
-				order,
-				version,
-				override,
-				a.config.memo(cmd),
-				pathName,
-			)
+			return runCreateChannel(a, cmd, args)
 		},
 	}
 
@@ -284,6 +221,89 @@ $ %s tx chan demo-path --timeout 5s --max-retries 10`,
 	cmd = channelParameterFlags(a.viper, cmd)
 	cmd = memoFlag(a.viper, cmd)
 	return cmd
+}
+
+type createChannelOptions struct {
+	override bool
+	srcPort  string
+	dstPort  string
+	order    string
+	version  string
+	timeout  time.Duration
+	retries  uint64
+}
+
+func runCreateChannel(a *appState, cmd *cobra.Command, args []string) error {
+	pathName := args[0]
+	chains, src, dst, err := a.config.ChainsFromPath(pathName)
+	if err != nil {
+		return err
+	}
+	options, err := readCreateChannelOptions(cmd)
+	if err != nil {
+		return err
+	}
+	if err := ensurePathKeysExist(chains, src, dst); err != nil {
+		return err
+	}
+	return chains[src].CreateOpenChannels(
+		cmd.Context(),
+		chains[dst],
+		options.retries,
+		options.timeout,
+		options.srcPort,
+		options.dstPort,
+		options.order,
+		options.version,
+		options.override,
+		a.config.memo(cmd),
+		pathName,
+	)
+}
+
+func readCreateChannelOptions(cmd *cobra.Command) (createChannelOptions, error) {
+	var options createChannelOptions
+	var err error
+	if options.override, err = cmd.Flags().GetBool(flagOverride); err != nil {
+		return options, err
+	}
+	if options.srcPort, err = cmd.Flags().GetString(flagSrcPort); err != nil {
+		return options, err
+	}
+	if options.dstPort, err = cmd.Flags().GetString(flagDstPort); err != nil {
+		return options, err
+	}
+	if options.order, err = cmd.Flags().GetString(flagOrder); err != nil {
+		return options, err
+	}
+	if options.version, err = cmd.Flags().GetString(flagVersion); err != nil {
+		return options, err
+	}
+	if options.timeout, err = getTimeout(cmd); err != nil {
+		return options, err
+	}
+	if options.retries, err = cmd.Flags().GetUint64(flagMaxRetries); err != nil {
+		return options, err
+	}
+	return options, nil
+}
+
+func ensurePathKeysExist(chains relayer.Chains, src, dst string) error {
+	if exists := chains[src].ChainProvider.KeyExists(chains[src].ChainProvider.Key()); !exists {
+		return fmt.Errorf(
+			"key %s not found on src chain %s",
+			chains[src].ChainProvider.Key(),
+			chains[src].ChainID(),
+		)
+	}
+	if exists := chains[dst].ChainProvider.KeyExists(chains[dst].ChainProvider.Key()); !exists {
+		return fmt.Errorf(
+			"key %s not found on dst chain %s",
+			chains[dst].ChainProvider.Key(),
+			chains[dst].ChainID(),
+		)
+	}
+	return nil
 }
 
 func closeChannelCmd(a *appState) *cobra.Command {
@@ -299,46 +319,7 @@ $ %s tx channel-close demo-path channel-0 transfer -o 3s`,
 			appName, appName, appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pathName := args[0]
-
-			c, src, dst, err := a.config.ChainsFromPath(pathName)
-			if err != nil {
-				return err
-			}
-
-			to, err := getTimeout(cmd)
-			if err != nil {
-				return err
-			}
-
-			retries, err := cmd.Flags().GetUint64(flagMaxRetries)
-			if err != nil {
-				return err
-			}
-
-			channelID := args[1]
-			portID := args[2]
-
-			// ensure that keys exist
-			if exists := c[src].ChainProvider.KeyExists(c[src].ChainProvider.Key()); !exists {
-				return fmt.Errorf("key %s not found on src chain %s", c[src].ChainProvider.Key(), c[src].ChainID())
-			}
-
-			if exists := c[dst].ChainProvider.KeyExists(c[dst].ChainProvider.Key()); !exists {
-				return fmt.Errorf("key %s not found on dst chain %s", c[dst].ChainProvider.Key(), c[dst].ChainID())
-			}
-
-			srch, err := c[src].ChainProvider.QueryLatestHeight(cmd.Context())
-			if err != nil {
-				return err
-			}
-
-			_, err = c[src].ChainProvider.QueryChannel(cmd.Context(), srch, channelID, portID)
-			if err != nil {
-				return err
-			}
-
-			return c[src].CloseChannel(cmd.Context(), c[dst], retries, to, channelID, portID, a.config.memo(cmd), pathName)
+			return runCloseChannel(a, cmd, args)
 		},
 	}
 
@@ -346,6 +327,44 @@ $ %s tx channel-close demo-path channel-0 transfer -o 3s`,
 	cmd = retryFlag(a.viper, cmd)
 	cmd = memoFlag(a.viper, cmd)
 	return cmd
+}
+
+func runCloseChannel(a *appState, cmd *cobra.Command, args []string) error {
+	pathName := args[0]
+	chains, src, dst, err := a.config.ChainsFromPath(pathName)
+	if err != nil {
+		return err
+	}
+	timeout, err := getTimeout(cmd)
+	if err != nil {
+		return err
+	}
+	retries, err := cmd.Flags().GetUint64(flagMaxRetries)
+	if err != nil {
+		return err
+	}
+	channelID := args[1]
+	portID := args[2]
+	if err := ensurePathKeysExist(chains, src, dst); err != nil {
+		return err
+	}
+	srcHeight, err := chains[src].ChainProvider.QueryLatestHeight(cmd.Context())
+	if err != nil {
+		return err
+	}
+	if _, err = chains[src].ChainProvider.QueryChannel(cmd.Context(), srcHeight, channelID, portID); err != nil {
+		return err
+	}
+	return chains[src].CloseChannel(
+		cmd.Context(),
+		chains[dst],
+		retries,
+		timeout,
+		channelID,
+		portID,
+		a.config.memo(cmd),
+		pathName,
+	)
 }
 
 func linkCmd(a *appState) *cobra.Command {
@@ -435,99 +454,7 @@ $ %s tx flush demo-path channel-0`,
 			appName, appName, appName,
 		)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chains := make(map[string]*relayer.Chain)
-			var paths []relayer.NamedPath
-
-			if len(args) > 0 {
-				pathName := args[0]
-				path := a.config.Paths.MustGet(pathName)
-				paths = append(paths, relayer.NamedPath{
-					Name: pathName,
-					Path: path,
-				})
-
-				// collect unique chain IDs
-				chains[path.Src.ChainID] = nil
-				chains[path.Dst.ChainID] = nil
-			} else {
-				for n, path := range a.config.Paths {
-					paths = append(paths, relayer.NamedPath{
-						Name: n,
-						Path: path,
-					})
-
-					// collect unique chain IDs
-					chains[path.Src.ChainID] = nil
-					chains[path.Dst.ChainID] = nil
-				}
-			}
-
-			chainIDs := make([]string, 0, len(chains))
-			for chainID := range chains {
-				chainIDs = append(chainIDs, chainID)
-			}
-
-			// get chain configurations
-			chains, err := a.config.Chains.Gets(chainIDs...)
-			if err != nil {
-				return err
-			}
-
-			if err := ensureKeysExist(chains); err != nil {
-				return err
-			}
-
-			maxMsgLength, err := cmd.Flags().GetUint64(flagMaxMsgLength)
-			if err != nil {
-				return err
-			}
-
-			if len(args) == 2 {
-				// Only allow specific channel
-				paths[0].Path.Filter = relayer.ChannelFilter{
-					Rule:        processor.RuleAllowList,
-					ChannelList: []string{args[1]},
-				}
-			}
-
-			stuckPacket, err := parseStuckPacketFromFlags(cmd)
-			if err != nil {
-				return err
-			}
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), flushTimeout)
-			defer cancel()
-
-			rlyErrCh := relayer.StartRelayer(
-				ctx,
-				a.log,
-				chains,
-				paths,
-				maxMsgLength,
-				a.config.Global.MaxReceiverSize,
-				a.config.Global.ICS20MemoLimit,
-				a.config.memo(cmd),
-				0,
-				0,
-				&processor.FlushLifecycle{},
-				relayer.ProcessorEvents,
-				0,
-				nil,
-				stuckPacket,
-			)
-
-			// Block until the error channel sends a message.
-			// The context being canceled will cause the relayer to stop,
-			// so we don't want to separately monitor the ctx.Done channel,
-			// because we would risk returning before the relayer cleans up.
-			if err := <-rlyErrCh; err != nil && !errors.Is(err, context.Canceled) {
-				a.log.Warn(
-					"Relayer start error",
-					zap.Error(err),
-				)
-				return err
-			}
-			return nil
+			return runFlush(a, cmd, args)
 		},
 	}
 
@@ -536,6 +463,99 @@ $ %s tx flush demo-path channel-0`,
 	cmd = stuckPacketFlags(a.viper, cmd)
 
 	return cmd
+}
+
+func runFlush(a *appState, cmd *cobra.Command, args []string) error {
+	paths, chainIDs := flushPathsAndChainIDs(a, args)
+	chains, err := a.config.Chains.Gets(chainIDs...)
+	if err != nil {
+		return err
+	}
+	if err := ensureKeysExist(chains); err != nil {
+		return err
+	}
+	maxMsgLength, err := cmd.Flags().GetUint64(flagMaxMsgLength)
+	if err != nil {
+		return err
+	}
+	if len(args) == 2 {
+		paths[0].Path.Filter = relayer.ChannelFilter{
+			Rule:        processor.RuleAllowList,
+			ChannelList: []string{args[1]},
+		}
+	}
+	stuckPacket, err := parseStuckPacketFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+	return startFlushRelayer(a, cmd, chains, paths, maxMsgLength, stuckPacket)
+}
+
+func flushPathsAndChainIDs(a *appState, args []string) ([]relayer.NamedPath, []string) {
+	seenChainIDs := make(map[string]struct{})
+	var paths []relayer.NamedPath
+	var chainIDs []string
+	if len(args) > 0 {
+		pathName := args[0]
+		path := a.config.Paths.MustGet(pathName)
+		paths = append(paths, relayer.NamedPath{Name: pathName, Path: path})
+		chainIDs = appendPathChainIDs(chainIDs, seenChainIDs, path)
+	} else {
+		for name, path := range a.config.Paths {
+			paths = append(paths, relayer.NamedPath{Name: name, Path: path})
+			chainIDs = appendPathChainIDs(chainIDs, seenChainIDs, path)
+		}
+	}
+	return paths, chainIDs
+}
+
+func appendPathChainIDs(chainIDs []string, seen map[string]struct{}, path *relayer.Path) []string {
+	if _, ok := seen[path.Src.ChainID]; !ok {
+		seen[path.Src.ChainID] = struct{}{}
+		chainIDs = append(chainIDs, path.Src.ChainID)
+	}
+	if _, ok := seen[path.Dst.ChainID]; !ok {
+		seen[path.Dst.ChainID] = struct{}{}
+		chainIDs = append(chainIDs, path.Dst.ChainID)
+	}
+	return chainIDs
+}
+
+func startFlushRelayer(
+	a *appState,
+	cmd *cobra.Command,
+	chains relayer.Chains,
+	paths []relayer.NamedPath,
+	maxMsgLength uint64,
+	stuckPacket *processor.StuckPacket,
+) error {
+	ctx, cancel := context.WithTimeout(cmd.Context(), flushTimeout)
+	defer cancel()
+	rlyErrCh := relayer.StartRelayer(
+		ctx,
+		a.log,
+		chains,
+		paths,
+		maxMsgLength,
+		a.config.Global.MaxReceiverSize,
+		a.config.Global.ICS20MemoLimit,
+		a.config.memo(cmd),
+		0,
+		0,
+		&processor.FlushLifecycle{},
+		relayer.ProcessorEvents,
+		0,
+		nil,
+		stuckPacket,
+	)
+
+	// Block until the error channel sends a message. The canceled context will
+	// stop the relayer, so returning on ctx.Done could precede its cleanup.
+	if err := <-rlyErrCh; err != nil && !errors.Is(err, context.Canceled) {
+		a.log.Warn("Relayer start error", zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 func relayMsgsCmd(a *appState) *cobra.Command {
@@ -596,116 +616,163 @@ $ %s tx transfer ibc-0 ibc-1 100000stake raw:non-bech32-address channel-0 --path
 $ %s tx raw send ibc-0 ibc-1 100000stake cosmos1skjwj5whet0lpe65qaq4rpq03hjxlwd9nf39lk channel-0 --path demo -c 5
 `, appName, appName, appName, appName)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			src, ok := a.config.Chains[args[0]]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			dst, ok := a.config.Chains[args[1]]
-			if !ok {
-				return errChainNotFound(args[1])
-			}
-
-			pathString, err := cmd.Flags().GetString(flagPath)
-			if err != nil {
-				return err
-			}
-
-			var path *relayer.Path
-			if path, err = setPathsFromArgs(a, src, dst, pathString); err != nil {
-				return err
-			}
-
-			amount, err := sdk.ParseCoinNormalized(args[2])
-			if err != nil {
-				return err
-			}
-
-			srch, err := src.ChainProvider.QueryLatestHeight(cmd.Context())
-			if err != nil {
-				return err
-			}
-
-			// Query all channels for the configured connection on the src chain
-			srcChannelID := args[4]
-
-			var pathConnectionID string
-			switch {
-			case src.ChainID() == path.Src.ChainID:
-				pathConnectionID = path.Src.ConnectionID
-			case src.ChainID() == path.Dst.ChainID:
-				pathConnectionID = path.Dst.ConnectionID
-			default:
-				return fmt.Errorf("no path configured using chain-id: %s", src.ChainID())
-			}
-
-			channels, err := src.ChainProvider.QueryConnectionChannels(cmd.Context(), srch, pathConnectionID)
-			if err != nil {
-				return err
-			}
-
-			// Ensure the specified channel exists for the given path
-			var srcChannel *chantypes.IdentifiedChannel
-			for _, channel := range channels {
-				if channel.ChannelId == srcChannelID {
-					srcChannel = channel
-					break
-				}
-			}
-
-			if srcChannel == nil {
-				return fmt.Errorf("could not find channel{%s} for chain{%s}@connection{%s}",
-					srcChannelID, src, pathConnectionID)
-			}
-
-			dts, err := src.ChainProvider.QueryDenomTraces(cmd.Context(), 0, 100, srch)
-			if err != nil {
-				return err
-			}
-
-			for _, d := range dts {
-				if amount.Denom == d.Path() {
-					amount = sdk.NewCoin(d.IBCDenom(), amount.Amount)
-				}
-			}
-
-			toHeightOffset, err := cmd.Flags().GetUint64(flagTimeoutHeightOffset)
-			if err != nil {
-				return err
-			}
-
-			toTimeOffset, err := cmd.Flags().GetDuration(flagTimeoutTimeOffset)
-			if err != nil {
-				return err
-			}
-
-			// If the argument begins with "raw:" then use the suffix directly.
-			rawDstAddr := strings.TrimPrefix(args[3], "raw:")
-			var dstAddr string
-			dstAddr = args[3]
-			if rawDstAddr != args[3] {
-				// Don't parse the rest of the dstAddr... it's raw.
-				dstAddr = rawDstAddr
-			}
-
-			memo := a.config.memo(cmd)
-
-			return src.SendTransferMsg(
-				cmd.Context(),
-				a.log,
-				dst,
-				amount,
-				dstAddr,
-				memo,
-				toHeightOffset,
-				toTimeOffset,
-				srcChannel,
-			)
+			return runTransfer(a, cmd, args)
 		},
 	}
 
 	cmd = memoFlag(a.viper, cmd)
 	return timeoutFlags(a.viper, pathFlag(a.viper, cmd))
+}
+
+type transferPreparation struct {
+	src       *relayer.Chain
+	dst       *relayer.Chain
+	path      *relayer.Path
+	amount    sdk.Coin
+	srcHeight int64
+}
+
+func runTransfer(a *appState, cmd *cobra.Command, args []string) error {
+	transfer, err := prepareTransfer(a, cmd, args)
+	if err != nil {
+		return err
+	}
+	srcChannel, amount, err := prepareTransferChannel(cmd, transfer, args[4])
+	if err != nil {
+		return err
+	}
+	timeoutHeightOffset, timeoutTimeOffset, err := readTransferTimeouts(cmd)
+	if err != nil {
+		return err
+	}
+
+	// If the argument begins with "raw:" then use the suffix directly.
+	rawDstAddr := strings.TrimPrefix(args[3], "raw:")
+	dstAddr := args[3]
+	if rawDstAddr != args[3] {
+		// Don't parse the rest of the dstAddr; it is raw.
+		dstAddr = rawDstAddr
+	}
+	return transfer.src.SendTransferMsg(
+		cmd.Context(),
+		a.log,
+		transfer.dst,
+		amount,
+		dstAddr,
+		a.config.memo(cmd),
+		timeoutHeightOffset,
+		timeoutTimeOffset,
+		srcChannel,
+	)
+}
+
+func prepareTransfer(a *appState, cmd *cobra.Command, args []string) (transferPreparation, error) {
+	var transfer transferPreparation
+	var ok bool
+	transfer.src, ok = a.config.Chains[args[0]]
+	if !ok {
+		return transfer, errChainNotFound(args[0])
+	}
+	transfer.dst, ok = a.config.Chains[args[1]]
+	if !ok {
+		return transfer, errChainNotFound(args[1])
+	}
+	pathName, err := cmd.Flags().GetString(flagPath)
+	if err != nil {
+		return transfer, err
+	}
+	transfer.path, err = setPathsFromArgs(a, transfer.src, transfer.dst, pathName)
+	if err != nil {
+		return transfer, err
+	}
+	transfer.amount, err = sdk.ParseCoinNormalized(args[2])
+	if err != nil {
+		return transfer, err
+	}
+	transfer.srcHeight, err = transfer.src.ChainProvider.QueryLatestHeight(cmd.Context())
+	return transfer, err
+}
+
+func prepareTransferChannel(
+	cmd *cobra.Command,
+	transfer transferPreparation,
+	srcChannelID string,
+) (*chantypes.IdentifiedChannel, sdk.Coin, error) {
+	connectionID, err := transferPathConnectionID(transfer.src, transfer.path)
+	if err != nil {
+		return nil, sdk.Coin{}, err
+	}
+	channels, err := transfer.src.ChainProvider.QueryConnectionChannels(
+		cmd.Context(),
+		transfer.srcHeight,
+		connectionID,
+	)
+	if err != nil {
+		return nil, sdk.Coin{}, err
+	}
+	srcChannel := transferChannel(channels, srcChannelID)
+	if srcChannel == nil {
+		return nil, sdk.Coin{}, fmt.Errorf(
+			"could not find channel{%s} for chain{%s}@connection{%s}",
+			srcChannelID,
+			transfer.src,
+			connectionID,
+		)
+	}
+	denomTraces, err := transfer.src.ChainProvider.QueryDenomTraces(
+		cmd.Context(),
+		0,
+		100,
+		transfer.srcHeight,
+	)
+	if err != nil {
+		return nil, sdk.Coin{}, err
+	}
+	return srcChannel, transferIBCDenom(transfer.amount, denomTraces), nil
+}
+
+func transferPathConnectionID(src *relayer.Chain, path *relayer.Path) (string, error) {
+	switch src.ChainID() {
+	case path.Src.ChainID:
+		return path.Src.ConnectionID, nil
+	case path.Dst.ChainID:
+		return path.Dst.ConnectionID, nil
+	default:
+		return "", fmt.Errorf("no path configured using chain-id: %s", src.ChainID())
+	}
+}
+
+func transferChannel(
+	channels []*chantypes.IdentifiedChannel,
+	srcChannelID string,
+) *chantypes.IdentifiedChannel {
+	for _, channel := range channels {
+		if channel.ChannelId == srcChannelID {
+			return channel
+		}
+	}
+	return nil
+}
+
+func transferIBCDenom(amount sdk.Coin, denomTraces []transfertypes.Denom) sdk.Coin {
+	for _, denomTrace := range denomTraces {
+		if amount.Denom == denomTrace.Path() {
+			amount = sdk.NewCoin(denomTrace.IBCDenom(), amount.Amount)
+		}
+	}
+	return amount
+}
+
+func readTransferTimeouts(cmd *cobra.Command) (uint64, time.Duration, error) {
+	heightOffset, err := cmd.Flags().GetUint64(flagTimeoutHeightOffset)
+	if err != nil {
+		return 0, 0, err
+	}
+	timeOffset, err := cmd.Flags().GetDuration(flagTimeoutTimeOffset)
+	if err != nil {
+		return 0, 0, err
+	}
+	return heightOffset, timeOffset, nil
 }
 
 func setPathsFromArgs(a *appState, src, dst *relayer.Chain, name string) (*relayer.Path, error) {
@@ -714,39 +781,34 @@ func setPathsFromArgs(a *appState, src, dst *relayer.Chain, name string) (*relay
 	if err != nil {
 		return nil, err
 	}
-
-	// Given the number of args and the number of paths, work on the appropriate
-	// path.
-	var path *relayer.Path
-	switch {
-	case name != "" && len(paths) > 1:
-		if path, err = paths.Get(name); err != nil {
-			return nil, err
-		}
-
-	case name != "" && len(paths) == 1:
-		if path, err = paths.Get(name); err != nil {
-			return nil, err
-		}
-
-	case name == "" && len(paths) > 1:
-		return nil, fmt.Errorf("more than one path between %s and %s exists, pass in path name", src.ChainID(), dst.ChainID())
-
-	case name == "" && len(paths) == 1:
-		for _, v := range paths {
-			path = v
-		}
+	path, err := selectPathFromArgs(paths, src, dst, name)
+	if err != nil {
+		return nil, err
 	}
-
 	if err := src.SetPath(path.End(src.ChainID())); err != nil {
 		return nil, err
 	}
-
 	if err := dst.SetPath(path.End(dst.ChainID())); err != nil {
 		return nil, err
 	}
-
 	return path, nil
+}
+
+func selectPathFromArgs(paths relayer.Paths, src, dst *relayer.Chain, name string) (*relayer.Path, error) {
+	if name != "" {
+		return paths.Get(name)
+	}
+	if len(paths) > 1 {
+		return nil, fmt.Errorf(
+			"more than one path between %s and %s exists, pass in path name",
+			src.ChainID(),
+			dst.ChainID(),
+		)
+	}
+	for _, path := range paths {
+		return path, nil
+	}
+	return nil, nil
 }
 
 // ensureKeysExist returns an error if a configured key for a given chain does not exist.
