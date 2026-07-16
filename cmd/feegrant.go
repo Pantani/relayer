@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -39,131 +40,13 @@ func feegrantConfigureBasicCmd(a *appState) *cobra.Command {
 		Long:  "feegrants for the given chain. 10 grantees by default, all with an unrestricted BasicAllowance.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chain := args[0]
-			cosmosChain, ok := a.config.Chains[chain]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			prov, ok := cosmosChain.ChainProvider.(*cosmos.CosmosProvider)
-			if !ok {
-				return errors.New("only CosmosProvider can be feegranted")
-			}
-
-			granterKeyOrAddr := ""
-
-			if len(args) > 1 {
-				granterKeyOrAddr = args[1]
-			} else if prov.PCfg.FeeGrants != nil {
-				granterKeyOrAddr = prov.PCfg.FeeGrants.GranterKeyOrAddr
-			} else {
-				granterKeyOrAddr = prov.PCfg.Key
-			}
-
-			externalGranter := false
-
-			granterKey, err := prov.KeyFromKeyOrAddress(granterKeyOrAddr)
-			if err != nil {
-				externalGranter = true
-			}
-
-			if externalGranter {
-				_, err := prov.DecodeBech32AccAddr(granterKeyOrAddr)
-				if err != nil {
-					return fmt.Errorf("an unknown granter was specified: '%s' is not a valid bech32 address", granterKeyOrAddr)
-				}
-			}
-
-			if delete {
-				a.log.Info("Deleting feegrant configuration", zap.String("chain", chain))
-
-				cfgErr := a.performConfigLockingOperation(cmd.Context(), func() error {
-					chain := a.config.Chains[chain]
-					oldProv := chain.ChainProvider.(*cosmos.CosmosProvider)
-					oldProv.PCfg.FeeGrants = nil
-					return nil
-				})
-				cobra.CheckErr(cfgErr)
-				return nil
-			}
-
-			if prov.PCfg.FeeGrants != nil && granterKey != prov.PCfg.FeeGrants.GranterKeyOrAddr && !update {
-				return fmt.Errorf("you specified granter '%s' which is different than configured feegranter '%s', but you did not specify the --overwrite-granter flag", granterKeyOrAddr, prov.PCfg.FeeGrants.GranterKeyOrAddr)
-			} else if prov.PCfg.FeeGrants != nil && granterKey != prov.PCfg.FeeGrants.GranterKeyOrAddr && update {
-				cfgErr := a.performConfigLockingOperation(cmd.Context(), func() error {
-					prov.PCfg.FeeGrants.GranterKeyOrAddr = granterKey
-					prov.PCfg.FeeGrants.IsExternalGranter = externalGranter
-					return nil
-				})
-				cobra.CheckErr(cfgErr)
-			}
-
-			if prov.PCfg.FeeGrants == nil || updateGrantees || len(grantees) > 0 {
-				var feegrantErr error
-
-				// No list of grantees was provided, so we will use the default naming convention "grantee1, ... granteeN"
-				if grantees == nil {
-					if externalGranter {
-						return fmt.Errorf("external granter %s was specified, pre-authorized grantees must also be specified", granterKeyOrAddr)
-					}
-					feegrantErr = prov.ConfigureFeegrants(numGrantees, granterKey)
-				} else if !externalGranter {
-					feegrantErr = prov.ConfigureWithGrantees(grantees, granterKey)
-				} else {
-					feegrantErr = prov.ConfigureWithExternalGranter(grantees, granterKeyOrAddr)
-				}
-
-				if feegrantErr != nil {
-					return feegrantErr
-				}
-
-				cfgErr := a.performConfigLockingOperation(cmd.Context(), func() error {
-					chain := a.config.Chains[chain]
-					oldProv := chain.ChainProvider.(*cosmos.CosmosProvider)
-					prov.PCfg.FeeGrants.IsExternalGranter = externalGranter
-					oldProv.PCfg.FeeGrants = prov.PCfg.FeeGrants
-					return nil
-				})
-				cobra.CheckErr(cfgErr)
-			}
-
-			memo, err := cmd.Flags().GetString(flagMemo)
-			if err != nil {
-				return err
-			}
-
-			gas := uint64(0)
-			gasStr, _ := cmd.Flags().GetString(sdkflags.FlagGas)
-			if gasStr != "" {
-				gasSetting, _ := sdkflags.ParseGasSetting(gasStr)
-				gas = gasSetting.Gas
-			}
-
-			ctx := cmd.Context()
-			_, err = prov.EnsureBasicGrants(ctx, memo, gas)
-			if err != nil {
-				return fmt.Errorf("error writing grants on chain: '%s'", err.Error())
-			}
-
-			// Get latest height from the chain, mark feegrant configuration as verified up to that height.
-			// This means we've verified feegranting is enabled on-chain and TXs can be sent with a feegranter.
-			if prov.PCfg.FeeGrants != nil {
-				h, err := prov.QueryLatestHeight(ctx)
-				cobra.CheckErr(err)
-
-				cfgErr := a.performConfigLockingOperation(cmd.Context(), func() error {
-					chain := a.config.Chains[chain]
-					oldProv := chain.ChainProvider.(*cosmos.CosmosProvider)
-					prov.PCfg.FeeGrants.IsExternalGranter = externalGranter
-					oldProv.PCfg.FeeGrants = prov.PCfg.FeeGrants
-					oldProv.PCfg.FeeGrants.BlockHeightVerified = h
-					a.log.Info("feegrant configured", zap.Int64("height", h))
-					return nil
-				})
-				cobra.CheckErr(cfgErr)
-			}
-
-			return nil
+			return runFeegrantConfigureBasic(cmd, a, args, feegrantConfigureOptions{
+				numGrantees:       numGrantees,
+				overwriteGranter:  update,
+				delete:            delete,
+				overwriteGrantees: updateGrantees,
+				grantees:          grantees,
+			})
 		},
 	}
 
@@ -179,50 +62,256 @@ func feegrantConfigureBasicCmd(a *appState) *cobra.Command {
 	return cmd
 }
 
+type feegrantConfigureOptions struct {
+	numGrantees       int
+	overwriteGranter  bool
+	delete            bool
+	overwriteGrantees bool
+	grantees          []string
+}
+
+type feegrantGranter struct {
+	keyOrAddress string
+	key          string
+	external     bool
+}
+
+func runFeegrantConfigureBasic(
+	cmd *cobra.Command,
+	a *appState,
+	args []string,
+	options feegrantConfigureOptions,
+) error {
+	chain := args[0]
+	prov, err := feegrantCosmosProvider(a, chain)
+	if err != nil {
+		return err
+	}
+
+	granter, err := resolveFeegrantGranter(prov, args)
+	if err != nil {
+		return err
+	}
+
+	if options.delete {
+		return deleteFeegrantConfiguration(cmd, a, chain)
+	}
+	if err := overwriteFeegrantGranter(cmd, a, prov, granter, options.overwriteGranter); err != nil {
+		return err
+	}
+	if err := configureFeegrantGrantees(cmd, a, chain, prov, granter, options); err != nil {
+		return err
+	}
+
+	memo, err := cmd.Flags().GetString(flagMemo)
+	if err != nil {
+		return err
+	}
+	gas := feegrantGas(cmd)
+
+	ctx := cmd.Context()
+	if _, err = prov.EnsureBasicGrants(ctx, memo, gas); err != nil {
+		return fmt.Errorf("error writing grants on chain: '%s'", err.Error())
+	}
+
+	return verifyFeegrantConfiguration(cmd, ctx, a, chain, prov, granter.external)
+}
+
+func feegrantCosmosProvider(a *appState, chain string) (*cosmos.CosmosProvider, error) {
+	cosmosChain, ok := a.config.Chains[chain]
+	if !ok {
+		return nil, errChainNotFound(chain)
+	}
+	prov, ok := cosmosChain.ChainProvider.(*cosmos.CosmosProvider)
+	if !ok {
+		return nil, errors.New("only CosmosProvider can be feegranted")
+	}
+	return prov, nil
+}
+
+func resolveFeegrantGranter(prov *cosmos.CosmosProvider, args []string) (feegrantGranter, error) {
+	granter := feegrantGranter{}
+	switch {
+	case len(args) > 1:
+		granter.keyOrAddress = args[1]
+	case prov.PCfg.FeeGrants != nil:
+		granter.keyOrAddress = prov.PCfg.FeeGrants.GranterKeyOrAddr
+	default:
+		granter.keyOrAddress = prov.PCfg.Key
+	}
+
+	var err error
+	granter.key, err = prov.KeyFromKeyOrAddress(granter.keyOrAddress)
+	if err != nil {
+		granter.external = true
+	}
+	if granter.external {
+		if _, err := prov.DecodeBech32AccAddr(granter.keyOrAddress); err != nil {
+			return feegrantGranter{}, fmt.Errorf("an unknown granter was specified: '%s' is not a valid bech32 address", granter.keyOrAddress)
+		}
+	}
+	return granter, nil
+}
+
+func deleteFeegrantConfiguration(cmd *cobra.Command, a *appState, chain string) error {
+	a.log.Info("Deleting feegrant configuration", zap.String("chain", chain))
+	cfgErr := a.performConfigLockingOperation(cmd.Context(), func() error {
+		chain := a.config.Chains[chain]
+		oldProv := chain.ChainProvider.(*cosmos.CosmosProvider)
+		oldProv.PCfg.FeeGrants = nil
+		return nil
+	})
+	cobra.CheckErr(cfgErr)
+	return nil
+}
+
+func overwriteFeegrantGranter(
+	cmd *cobra.Command,
+	a *appState,
+	prov *cosmos.CosmosProvider,
+	granter feegrantGranter,
+	overwrite bool,
+) error {
+	configured := prov.PCfg.FeeGrants
+	if configured == nil || granter.key == configured.GranterKeyOrAddr {
+		return nil
+	}
+	if !overwrite {
+		return fmt.Errorf("you specified granter '%s' which is different than configured feegranter '%s', but you did not specify the --overwrite-granter flag", granter.keyOrAddress, configured.GranterKeyOrAddr)
+	}
+
+	cfgErr := a.performConfigLockingOperation(cmd.Context(), func() error {
+		prov.PCfg.FeeGrants.GranterKeyOrAddr = granter.key
+		prov.PCfg.FeeGrants.IsExternalGranter = granter.external
+		return nil
+	})
+	cobra.CheckErr(cfgErr)
+	return nil
+}
+
+func configureFeegrantGrantees(
+	cmd *cobra.Command,
+	a *appState,
+	chain string,
+	prov *cosmos.CosmosProvider,
+	granter feegrantGranter,
+	options feegrantConfigureOptions,
+) error {
+	if prov.PCfg.FeeGrants != nil && !options.overwriteGrantees && len(options.grantees) == 0 {
+		return nil
+	}
+
+	if err := setFeegrantGrantees(prov, granter, options); err != nil {
+		return err
+	}
+	cfgErr := a.performConfigLockingOperation(cmd.Context(), func() error {
+		chain := a.config.Chains[chain]
+		oldProv := chain.ChainProvider.(*cosmos.CosmosProvider)
+		prov.PCfg.FeeGrants.IsExternalGranter = granter.external
+		oldProv.PCfg.FeeGrants = prov.PCfg.FeeGrants
+		return nil
+	})
+	cobra.CheckErr(cfgErr)
+	return nil
+}
+
+func setFeegrantGrantees(
+	prov *cosmos.CosmosProvider,
+	granter feegrantGranter,
+	options feegrantConfigureOptions,
+) error {
+	if options.grantees == nil {
+		if granter.external {
+			return fmt.Errorf("external granter %s was specified, pre-authorized grantees must also be specified", granter.keyOrAddress)
+		}
+		return prov.ConfigureFeegrants(options.numGrantees, granter.key)
+	}
+	if !granter.external {
+		return prov.ConfigureWithGrantees(options.grantees, granter.key)
+	}
+	return prov.ConfigureWithExternalGranter(options.grantees, granter.keyOrAddress)
+}
+
+func feegrantGas(cmd *cobra.Command) uint64 {
+	gasStr, _ := cmd.Flags().GetString(sdkflags.FlagGas)
+	if gasStr == "" {
+		return 0
+	}
+	gasSetting, _ := sdkflags.ParseGasSetting(gasStr)
+	return gasSetting.Gas
+}
+
+func verifyFeegrantConfiguration(
+	cmd *cobra.Command,
+	ctx context.Context,
+	a *appState,
+	chain string,
+	prov *cosmos.CosmosProvider,
+	externalGranter bool,
+) error {
+	// Get latest height from the chain, mark feegrant configuration as verified up to that height.
+	// This means we've verified feegranting is enabled on-chain and TXs can be sent with a feegranter.
+	if prov.PCfg.FeeGrants == nil {
+		return nil
+	}
+	h, err := prov.QueryLatestHeight(ctx)
+	cobra.CheckErr(err)
+
+	cfgErr := a.performConfigLockingOperation(cmd.Context(), func() error {
+		chain := a.config.Chains[chain]
+		oldProv := chain.ChainProvider.(*cosmos.CosmosProvider)
+		prov.PCfg.FeeGrants.IsExternalGranter = externalGranter
+		oldProv.PCfg.FeeGrants = prov.PCfg.FeeGrants
+		oldProv.PCfg.FeeGrants.BlockHeightVerified = h
+		a.log.Info("feegrant configured", zap.Int64("height", h))
+		return nil
+	})
+	cobra.CheckErr(cfgErr)
+	return nil
+}
+
 func feegrantBasicGrantsCmd(a *appState) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "basic chain-name [granter]",
 		Short: "query the grants for an account (if none is specified, the default account is returned)",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chain := args[0]
-			cosmosChain, ok := a.config.Chains[chain]
-			if !ok {
-				return errChainNotFound(args[0])
-			}
-
-			prov, ok := cosmosChain.ChainProvider.(*cosmos.CosmosProvider)
-			if !ok {
-				return errors.New("only CosmosProvider can be feegranted")
-			}
-
-			keyNameOrAddress := ""
-			if len(args) == 0 {
-				keyNameOrAddress = prov.PCfg.Key
-			} else {
-				keyNameOrAddress = args[0]
-			}
-
-			granterAcc, err := prov.AccountFromKeyOrAddress(keyNameOrAddress)
-			if err != nil {
-				a.log.Error("Unknown account", zap.String("key_or_address", keyNameOrAddress), zap.Error(err))
-				return err
-			}
-			granterAddr := prov.MustEncodeAccAddr(granterAcc)
-
-			res, err := prov.QueryFeegrantsByGranter(granterAddr, nil)
-			if err != nil {
-				return err
-			}
-
-			for _, grant := range res {
-				allowance, e := prov.Sprint(grant.Allowance)
-				cobra.CheckErr(e)
-				a.log.Info("feegrant", zap.String("granter", grant.Granter), zap.String("grantee", grant.Grantee), zap.String("allowance", allowance))
-			}
-
-			return nil
+			return runFeegrantBasicGrants(a, args)
 		},
 	}
 	return paginationFlags(a.viper, cmd, "feegrant")
+}
+
+func runFeegrantBasicGrants(a *appState, args []string) error {
+	chain := args[0]
+	prov, err := feegrantCosmosProvider(a, chain)
+	if err != nil {
+		return err
+	}
+
+	keyNameOrAddress := ""
+	if len(args) == 0 {
+		keyNameOrAddress = prov.PCfg.Key
+	} else {
+		keyNameOrAddress = args[0]
+	}
+
+	granterAcc, err := prov.AccountFromKeyOrAddress(keyNameOrAddress)
+	if err != nil {
+		a.log.Error("Unknown account", zap.String("key_or_address", keyNameOrAddress), zap.Error(err))
+		return err
+	}
+	granterAddr := prov.MustEncodeAccAddr(granterAcc)
+
+	res, err := prov.QueryFeegrantsByGranter(granterAddr, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, grant := range res {
+		allowance, e := prov.Sprint(grant.Allowance)
+		cobra.CheckErr(e)
+		a.log.Info("feegrant", zap.String("granter", grant.Granter), zap.String("grantee", grant.Grantee), zap.String("allowance", allowance))
+	}
+	return nil
 }
