@@ -53,40 +53,48 @@ func (s ethSecp256k1Algo) Name() hd.PubKeyType {
 
 // Derive derives and returns the eth_secp256k1 private key for the given mnemonic and HD path.
 func (s ethSecp256k1Algo) Derive() hd.DeriveFn {
-	return func(mnemonic string, bip39Passphrase, path string) ([]byte, error) {
-		hdpath, err := ethaccounts.ParseDerivationPath(path)
-		if err != nil {
-			return nil, err
-		}
+	return deriveEthSecp256k1
+}
 
-		seed, err := bip39.NewSeedWithErrorChecking(mnemonic, bip39Passphrase)
-		if err != nil {
-			return nil, err
-		}
-
-		masterKey, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
-		if err != nil {
-			return nil, err
-		}
-
-		key := masterKey
-		for _, n := range hdpath {
-			key, err = key.Derive(n)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		privateKey, err := key.ECPrivKey()
-		if err != nil {
-			return nil, err
-		}
-
-		privateKeyECDSA := privateKey.ToECDSA()
-		derivedKey := ethcrypto.FromECDSA(privateKeyECDSA)
-
-		return derivedKey, nil
+func deriveEthSecp256k1(mnemonic, bip39Passphrase, path string) ([]byte, error) {
+	hdpath, err := ethaccounts.ParseDerivationPath(path)
+	if err != nil {
+		return nil, err
 	}
+
+	seed, err := bip39.NewSeedWithErrorChecking(mnemonic, bip39Passphrase)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err = derivePath(key, hdpath)
+	if err != nil {
+		return nil, err
+	}
+
+	privateKey, err := key.ECPrivKey()
+	if err != nil {
+		return nil, err
+	}
+
+	return ethcrypto.FromECDSA(privateKey.ToECDSA()), nil
+}
+
+func derivePath(key *hdkeychain.ExtendedKey, path ethaccounts.DerivationPath) (*hdkeychain.ExtendedKey, error) {
+	var err error
+	for _, child := range path {
+		key, err = key.Derive(child)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return key, nil
 }
 
 // Generate generates a secp256k1 private key from the given bytes.
