@@ -1,8 +1,8 @@
 # Complexity inventory
 
-Generated: 2026-07-16T05:01:55Z  
-Base: `c30f6cbbee8e37870e5a7eae168b3f61113cc6f3`  
-Tools: `gocyclo@v0.6.0`, `gocognit@v1.2.1`, threshold `-over 10`  
+Generated: 2026-07-16T05:26:11Z
+Base: `8fa5e805cbba99091f6fcb7217e93c74461284c4`
+Tools: `gocyclo@v0.6.0`, `gocognit@v1.2.1`, threshold `-over 10`
 
 | Cyclomatic violations | Cognitive violations | Union | Max cycle | Max cognitive |
 |---:|---:|---:|---:|---:|

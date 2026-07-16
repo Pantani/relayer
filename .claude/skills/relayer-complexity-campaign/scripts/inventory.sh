@@ -116,9 +116,9 @@ fi
 mkdir -p "$(dirname "${OUTPUT}")"
 {
   printf '# Complexity inventory\n\n'
-  printf 'Generated: %s  \n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf 'Base: `%s`  \n' "$(git -C "${ROOT_DIR}" rev-parse HEAD)"
-  printf 'Tools: `gocyclo@%s`, `gocognit@%s`, threshold `-over %s`  \n\n' "${GOCYCLO_VERSION}" "${GOCOGNIT_VERSION}" "${MAX_ALLOWED}"
+  printf 'Generated: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'Base: `%s`\n' "$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  printf 'Tools: `gocyclo@%s`, `gocognit@%s`, threshold `-over %s`\n\n' "${GOCYCLO_VERSION}" "${GOCOGNIT_VERSION}" "${MAX_ALLOWED}"
   printf '| Cyclomatic violations | Cognitive violations | Union | Max cycle | Max cognitive |\n'
   printf '|---:|---:|---:|---:|---:|\n'
   printf '| %d | %d | %d | %d | %d |\n\n' "${cyclo_count}" "${cognit_count}" "${union_count}" "${max_cyclo}" "${max_cognit}"
