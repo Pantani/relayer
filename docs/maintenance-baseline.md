@@ -19,7 +19,7 @@ Implementado na branch `Pantani/cx/m0-baseline`:
 | Complexidade tocada | Todas as funções criadas ou modificadas neste fluxo ficam `<10/<10` |
 | Complexidade global | Continua vermelha: 98 ciclomaticas, 152 cognitivas, união 158; máximo 48/169 |
 
-O lint verde inicial contém `bodyclose`, `govet`, `ineffassign` e `nolintlint`, além de `gofmt`/`goimports`. A migração também revelou dívida preexistente em `staticcheck`, `unused`, `gosec` e linters de estilo; ela deve ser reduzida em lotes próprios, sem exclusões `nolint` em massa. O relatório reproduzível deste lote está em [`_workspace/06_m0_1_progress.md`](../_workspace/06_m0_1_progress.md).
+O lint verde inicial contém `bodyclose`, `govet`, `ineffassign` e `nolintlint`, além de `gofmt`/`goimports`. A migração também revelou dívida preexistente em `staticcheck`, `unused`, `gosec` e linters de estilo; ela deve ser reduzida em lotes próprios, sem exclusões `nolint` em massa.
 
 O M0.2 também foi concluído na mesma branch, em três fatias paralelas:
 
@@ -31,7 +31,7 @@ O M0.2 também foi concluído na mesma branch, em três fatias paralelas:
 | Build e testes | Raiz e interchaintest compilam; unit tests, race Ethermint, lint e diff-check passam |
 | Complexidade global | `98/152/158` passou para `86/139/145` em ciclo/cognitiva/união; máximo `48/99` |
 
-O relatório integrado está em [`_workspace/12_m0_2_qa.md`](../_workspace/12_m0_2_qa.md). O lifecycle global dos codecs EIP-712 continua sem initializer e foi registrado como gap preexistente, não como suporte concluído.
+O lifecycle global dos codecs EIP-712 continua sem initializer e foi registrado como gap preexistente, não como suporte concluído.
 
 O M0.3 concluiu a fundação protocol-neutral sem alterar os pins ou ligar o v2 ao runtime:
 
@@ -56,8 +56,6 @@ M1.1a, M1.1b e M1.1b-d avançaram a base até o grafo atual e restauraram o harn
 | Limite conhecido | Ainda não há chain runtime v11.2.0 nem relay v2 operacional; a imagem oficial `simd:v11.2.0` não está publicada |
 | Complexidade global | 83 violações ciclomáticas, 134 cognitivas, união 138; máximos 48/99; código novo/tocado `<10/<10` |
 
-O relatório reproduzível do contrato de integração está em [`_workspace/39_m1_1bd_progress.md`](../_workspace/39_m1_1bd_progress.md). A revisão focal está em [`_workspace/40_m1_1bd_review.md`](../_workspace/40_m1_1bd_review.md).
-
 ## Estado confirmado no snapshot inicial
 
 | Área | Resultado |
@@ -71,8 +69,6 @@ O relatório reproduzível do contrato de integração está em [`_workspace/39_
 | Testes | Histórico do snapshot: 96 passam e 1 falha porque `TestQueryBaseFee` dependia de RPC público; corrigido no M0.1 |
 | Lint | `.golangci.yml` é anterior ao schema v2; golangci-lint v2.12.2 encerra antes da análise |
 | Complexidade | 1.327 funções manuscritas; 158 violam ciclomatica ou cognitiva `<10`; máximo 48/169 |
-
-O inventário integral e reproduzível está em [`_workspace/01_branch_archaeologist_inventory.md`](../_workspace/01_branch_archaeologist_inventory.md). O ranking de todas as funções está em [`_workspace/02_complexity_engineer_baseline.md`](../_workspace/02_complexity_engineer_baseline.md).
 
 ## Gate de complexidade
 
@@ -98,17 +94,6 @@ os novos testes ficam abaixo de 10 nas duas métricas.
 8. **M3/M4 — novos destinos:** Eureka Cosmos-EVM; outros ecossistemas somente depois de contratos estáveis.
 
 Os hotspots do processor só devem ser decompostos depois de definido o modelo Classic/v2, pois hoje concentram a semântica de ordenação, cache, retry, ack e timeout. A previsão inicial é de 12 a 18 PRs pequenas nas oito trilhas, sempre com testes focados e scores `<10/<10` para código criado ou tocado.
-
-## Harness
-
-O orquestrador está em [`.claude/skills/relayer-maintenance-orchestrator/SKILL.md`](../.claude/skills/relayer-maintenance-orchestrator/SKILL.md). Ele coordena quatro papéis:
-
-- arqueologia de branches e PRs;
-- engenharia de complexidade;
-- análise de lacunas IBC/SDK;
-- QA de fronteiras entre evento, parser, estado, mensagem, broadcast e confirmação.
-
-Os artefatos `_workspace/00` em diante são a trilha de auditoria. Em reexecuções, apenas o produtor afetado deve rodar novamente, seguido de QA das fronteiras alteradas.
 
 ## Regra de conclusão
 

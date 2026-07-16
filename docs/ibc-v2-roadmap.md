@@ -16,7 +16,7 @@ O relayer atual não tem uma implementação parcial de IBC v2: sua arquitetura 
 
 O alvo de dependências pinado nesta auditoria é **ibc-go v11.2.0 + Cosmos SDK v0.54.3 + CometBFT v0.39.3 + Go 1.25.9**. `ibc-go v11.2.0` foi publicado durante a auditoria, em 2026-07-15 15:54:50 UTC. Embora seja uma tag estável, precisa de uma janela de soak e validação de interoperabilidade antes de produção.
 
-O critério solicitado de complexidade também reprova o snapshot: 158 de 1.327 funções manuscritas têm complexidade ciclomatica ou cognitiva `>= 10`; 151 são de produção. Os maiores hotspots são justamente o state machine, cache, parsing, broadcast e CLI Classic. Refatorá-los mecanicamente antes de definir a coexistência Classic/v2 criaria retrabalho. O plano abaixo transforma esses pontos junto com contratos e testes, mantendo o gate final estrito em **máximo 9 para ambas as métricas**. O baseline completo está em [`02_complexity_engineer_baseline.md`](../_workspace/02_complexity_engineer_baseline.md).
+O critério solicitado de complexidade também reprova o snapshot: 158 de 1.327 funções manuscritas têm complexidade ciclomatica ou cognitiva `>= 10`; 151 são de produção. Os maiores hotspots são justamente o state machine, cache, parsing, broadcast e CLI Classic. Refatorá-los mecanicamente antes de definir a coexistência Classic/v2 criaria retrabalho. O plano abaixo transforma esses pontos junto com contratos e testes, mantendo o gate final estrito em **máximo 9 para ambas as métricas**.
 
 ## Verdade de versões em 2026-07-15
 
@@ -179,7 +179,7 @@ Cada PR deve ter escopo pequeno, testes de transição/erro/retry correspondente
 
 ## Branches/PRs que podem ser minerados, sem merge direto
 
-O inventário integral das 79 heads do origin, 35 PRs upstream e seus grupos de equivalência está em [`01_branch_archaeologist_inventory.md`](../_workspace/01_branch_archaeologist_inventory.md). Estes são os deltas diretamente relevantes ao roadmap:
+A auditoria cobriu 79 heads do origin, 35 PRs upstream e seus grupos de equivalência. Estes são os deltas diretamente relevantes ao roadmap:
 
 | Fonte | Conteúdo aproveitável | Regra |
 |---|---|---|
