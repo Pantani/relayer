@@ -18,7 +18,7 @@ Base: `origin/main@4c1029d1177f797f11bcd560f14a18305a2e7353`
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-characterization-engineer` is the only `ACTIVE` editor for cli-tx characterization. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-engineer` is the only `ACTIVE` editor for cli-tx production. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
@@ -45,8 +45,8 @@ Exclusive worktree lease: `complexity-characterization-engineer` is the only `AC
 | cli-query characterization | complexity-characterization-engineer | characterization tests for `cmd/query.go`; `_workspace/complexity/characterization/cli-query.md` | `/Users/pantani/.codex/worktrees/complexity-cli-query/relayer` | completed; 21 focused/race checks, package 216 pass, tests max `5/5` |
 | cli-query production | complexity-engineer | `cmd/query.go` only | same worktree, after characterization approval | completed; 12 targets eliminated; helpers max `9/8`, file max `9/10` |
 | cli-query review | complexity-verifier | `_workspace/complexity/reviews/cli-query.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
-| cli-tx characterization | complexity-characterization-engineer | characterization tests for `cmd/tx.go`; `_workspace/complexity/characterization/cli-tx.md` | `/Users/pantani/.codex/worktrees/complexity-cli-tx/relayer` | active; production file read-only |
-| cli-tx production | complexity-engineer | `cmd/tx.go` only | same worktree, after characterization approval | pending |
+| cli-tx characterization | complexity-characterization-engineer | characterization tests for `cmd/tx.go`; `_workspace/complexity/characterization/cli-tx.md` | `/Users/pantani/.codex/worktrees/complexity-cli-tx/relayer` | completed; 20 focused/race checks, package 236 pass, tests max `3/3` |
+| cli-tx production | complexity-engineer | `cmd/tx.go` only | same worktree, after characterization approval | active; tests and campaign state read-only |
 | cli-tx review | complexity-verifier | `_workspace/complexity/reviews/cli-tx.md` only | same worktree under exclusive sequential lease | pending |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
