@@ -290,6 +290,10 @@ func getAddInputs(cmd *cobra.Command) (file string, url string, forceAdd bool, t
 		return
 	}
 
+	return validateAddInputs(file, url, forceAdd, testNet)
+}
+
+func validateAddInputs(file, url string, forceAdd, testNet bool) (string, string, bool, bool, error) {
 	if file != "" && url != "" {
 		return "", "", false, false, errMultipleAddFlags
 	}
@@ -298,7 +302,7 @@ func getAddInputs(cmd *cobra.Command) (file string, url string, forceAdd bool, t
 		return "", "", false, false, errInvalidTestnetFlag
 	}
 
-	return
+	return file, url, forceAdd, testNet, nil
 }
 
 func retryFlag(v *viper.Viper, cmd *cobra.Command) *cobra.Command {
