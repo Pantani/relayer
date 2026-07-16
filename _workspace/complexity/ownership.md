@@ -12,15 +12,15 @@ Base: `origin/main@4c1029d1177f797f11bcd560f14a18305a2e7353`
 | [#11](https://github.com/Pantani/relayer/pull/11) (draft) | `Pantani/cx/complexity-cli-config@ee1d834` | `cmd/config.go`, `cmd/appstate.go`, characterization/state | direct base for cli-start; no collision with #9/#10 |
 | [#12](https://github.com/Pantani/relayer/pull/12) (draft) | `Pantani/cx/complexity-cli-start@56b54b8` | `cmd/start.go`, `cmd/flags.go`, characterization/state | direct base for cli-chains; no collision with #9/#10/#11 |
 | [#13](https://github.com/Pantani/relayer/pull/13) (draft) | `Pantani/cx/complexity-cli-chains@c5f2735` | `cmd/chains.go`, characterization/state | direct base for cli-paths; no collision with #9/#10/#11/#12 |
-| [#14](https://github.com/Pantani/relayer/pull/14) (draft) | `Pantani/cx/complexity-cli-paths` | `cmd/paths.go`, characterization/state | campaign subwave; no collision with #9/#10/#11/#12/#13 |
+| [#14](https://github.com/Pantani/relayer/pull/14) (draft) | `Pantani/cx/complexity-cli-paths@714750d` | `cmd/paths.go`, characterization/state | direct base for cli-feegrant; no collision with #9/#10/#11/#12/#13 |
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-orchestrator` is the only `ACTIVE` editor for cli-paths integration and publication. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-characterization-engineer` is the only `ACTIVE` editor for cli-feegrant characterization. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
-| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md`, `_workspace/complexity/plan.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-cli-paths/relayer` | active; PR #14 published as draft |
+| campaign integration | complexity-orchestrator | `.claude/**`, `CLAUDE.md`, `_workspace/complexity/ledger.md`, `_workspace/complexity/ownership.md`, `_workspace/complexity/inventory.md`, `_workspace/complexity/plan.md` and Git integration | `/Users/pantani/.codex/worktrees/complexity-cli-feegrant/relayer` | idle during exclusive cli-feegrant characterization lease; branch based on #14 head |
 | cli-version characterization | complexity-characterization-engineer | `cmd/version_test.go`, `_workspace/complexity/characterization/cli-version.md` | same worktree under exclusive sequential lease | completed |
 | cli-version production | complexity-engineer | `cmd/version.go` only | same worktree, after characterization and harness approval | completed |
 | cli-version review | complexity-verifier | `_workspace/complexity/reviews/cli-version.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
@@ -37,5 +37,8 @@ Exclusive worktree lease: `complexity-orchestrator` is the only `ACTIVE` editor 
 | cli-paths characterization | complexity-characterization-engineer | `cmd/paths_characterization_test.go`; `_workspace/complexity/characterization/cli-paths.md` | `/Users/pantani/.codex/worktrees/complexity-cli-paths/relayer` | completed; introduced test `5/13` reduced to `1/1`, helpers max `3/5`, assertions/subtests preserved |
 | cli-paths production | complexity-engineer | `cmd/paths.go` only | same worktree, after characterization approval | completed; five targets `1/0`, helpers max `10/9`; production read-only |
 | cli-paths review | complexity-verifier | `_workspace/complexity/reviews/cli-paths.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
+| cli-feegrant characterization | complexity-characterization-engineer | characterization tests for `cmd/feegrant.go`; `_workspace/complexity/characterization/cli-feegrant.md` | `/Users/pantani/.codex/worktrees/complexity-cli-feegrant/relayer` | active; production file read-only |
+| cli-feegrant production | complexity-engineer | `cmd/feegrant.go` only | same worktree, after characterization approval | pending |
+| cli-feegrant review | complexity-verifier | `_workspace/complexity/reviews/cli-feegrant.md` only | same worktree under exclusive sequential lease | pending |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
