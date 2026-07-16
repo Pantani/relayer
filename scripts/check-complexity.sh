@@ -3,9 +3,9 @@
 set -u
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly MAX_ALLOWED=9
-readonly GOCYCLO_VERSION="${GOCYCLO_VERSION:-v0.6.0}"
-readonly GOCOGNIT_VERSION="${GOCOGNIT_VERSION:-v1.2.1}"
+readonly MAX_ALLOWED=10
+readonly GOCYCLO_VERSION="v0.6.0"
+readonly GOCOGNIT_VERSION="v1.2.1"
 
 cyclomatic_status=0
 cognitive_status=0
@@ -36,9 +36,9 @@ go run "github.com/uudashr/gocognit/cmd/gocognit@${GOCOGNIT_VERSION}" \
 
 if (( cyclomatic_status != 0 || cognitive_status != 0 )); then
   echo
-  echo "Complexity gate failed. Every handwritten Go function must score below 10 in both metrics." >&2
+  echo "Complexity gate failed. Every handwritten Go function must score at most 10 in both metrics." >&2
   exit 1
 fi
 
 echo
-echo "Complexity gate passed. Every handwritten Go function scores below 10 in both metrics."
+echo "Complexity gate passed. Every handwritten Go function scores at most 10 in both metrics."

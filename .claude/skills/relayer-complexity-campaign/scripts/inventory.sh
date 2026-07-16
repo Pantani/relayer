@@ -6,7 +6,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 readonly OUTPUT="${1:-${ROOT_DIR}/_workspace/complexity/inventory.md}"
 readonly GOCYCLO_VERSION="v0.6.0"
 readonly GOCOGNIT_VERSION="v1.2.1"
-readonly MAX_ALLOWED=9
+readonly MAX_ALLOWED=10
 
 go_files=()
 while IFS= read -r file; do
@@ -66,7 +66,7 @@ END {
   for (key in keys) {
     c=cyclo[key]+0
     g=cognit[key]+0
-    if (c > 9 || g > 9) {
+    if (c > 10 || g > 10) {
       split(source[key], location_parts, ":")
       path=location_parts[1]
       line=location_parts[2]
@@ -98,9 +98,9 @@ END {
   for (key in keys) {
     c=cyclo[key]+0
     g=cognit[key]+0
-    if (c > 9) cyclo_count++
-    if (g > 9) cognit_count++
-    if (c > 9 || g > 9) union_count++
+    if (c > 10) cyclo_count++
+    if (g > 10) cognit_count++
+    if (c > 10 || g > 10) union_count++
   }
   printf "%d %d %d %d %d", cyclo_count, cognit_count, union_count, max_cyclo, max_cognit
 }' "${tmp_dir}/cyclo.txt" "${tmp_dir}/cognit.txt")"

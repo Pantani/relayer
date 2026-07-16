@@ -68,11 +68,11 @@ M1.1a, M1.1b e M1.1b-d avançaram a base até o grafo atual e restauraram o harn
 | Build | `go build ./...` passa |
 | Testes | Histórico do snapshot: 96 passam e 1 falha porque `TestQueryBaseFee` dependia de RPC público; corrigido no M0.1 |
 | Lint | `.golangci.yml` é anterior ao schema v2; golangci-lint v2.12.2 encerra antes da análise |
-| Complexidade | 1.327 funções manuscritas; 158 violam ciclomatica ou cognitiva `<10`; máximo 48/169 |
+| Complexidade | Snapshot histórico com 1.327 funções manuscritas e limite máximo 9; máximo observado 48/169 |
 
 ## Gate de complexidade
 
-`make complexity` executa versões pinadas de `gocyclo` e `gocognit`, inclui testes e exclui somente arquivos com marcador canônico `Code generated ... DO NOT EDIT.`. O limite é máximo 9 por função nas duas métricas.
+`make complexity` executa versões pinadas de `gocyclo` e `gocognit`, inclui testes e exclui somente arquivos com marcador canônico `Code generated ... DO NOT EDIT.`. Desde 2026-07-16, por instrução explícita do usuário, o limite é máximo 10 por função nas duas métricas; score 10 passa e score 11 viola. Contagens históricas anteriores nesta página foram produzidas com máximo 9.
 
 O alvo está deliberadamente vermelho no snapshot. Não há baseline permissivo, `nolint` ou aumento do limite. Ele deve entrar como gate obrigatório de CI quando o inventário chegar a zero; até lá, cada função nova ou alterada precisa satisfazer o gate e o relatório global acompanha a redução.
 
@@ -80,7 +80,7 @@ No lote M1.1b-e, os parsers duplicados de identificadores de eventos foram
 consolidados sem alterar os erros públicos ou a semântica de atributo vazio. O
 inventário global passou para 83 violações ciclomáticas, 130 cognitivas e 134
 funções na união, com máximos preservados em 48/99. As quatro funções tocadas e
-os novos testes ficam abaixo de 10 nas duas métricas.
+os novos testes ficaram abaixo de 10 nas duas métricas, portanto também satisfazem o limite atual.
 
 ## Lotes de entrega
 
@@ -93,8 +93,8 @@ os novos testes ficam abaixo de 10 nas duas métricas.
 7. **M2 — stack atual:** ICS-20 v2, GMP, callbacks/rate-limit v2, PFM Classic, light clients, observabilidade, fault injection e fuzz.
 8. **M3/M4 — novos destinos:** Eureka Cosmos-EVM; outros ecossistemas somente depois de contratos estáveis.
 
-Os hotspots do processor só devem ser decompostos depois de definido o modelo Classic/v2, pois hoje concentram a semântica de ordenação, cache, retry, ack e timeout. A previsão inicial é de 12 a 18 PRs pequenas nas oito trilhas, sempre com testes focados e scores `<10/<10` para código criado ou tocado.
+Os hotspots do processor só devem ser decompostos depois de definido o modelo Classic/v2, pois hoje concentram a semântica de ordenação, cache, retry, ack e timeout. A previsão inicial era de 12 a 18 PRs pequenas nas oito trilhas, sempre com testes focados; a campanha atual exige scores `<=10/<=10` para código criado ou tocado.
 
 ## Regra de conclusão
 
-O programa só termina quando build e testes determinísticos passam, todas as funções manuscritas têm ciclomatica e cognitiva no máximo 9, IBC Classic possui política explícita de compatibilidade e a matriz M1+M2 de IBC v2 está verde contra chains reais pinadas.
+O programa só termina quando build e testes determinísticos passam, todas as funções manuscritas têm ciclomatica e cognitiva no máximo 10, IBC Classic possui política explícita de compatibilidade e a matriz M1+M2 de IBC v2 está verde contra chains reais pinadas.

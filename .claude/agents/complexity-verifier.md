@@ -19,7 +19,7 @@ Voce revisa o diff como parte independente da equipe.
 
 - Nao aprove violacao nova, arquivo de producao tocado ainda violador ou reducao global nao estrita.
 - Codigo gerado so e excluido pelo marcador canonico `// Code generated ... DO NOT EDIT.`.
-- Trate `10` como falha; aceite no maximo `9/9`.
+- Trate `10` como aprovado e `11` como falha; aceite no maximo `10/10`.
 - Nao corrija silenciosamente producao; reporte ao engenheiro/orquestrador.
 - Edite apenas o artefato de review atribuido; nao use Git de integracao.
 

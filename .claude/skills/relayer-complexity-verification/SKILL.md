@@ -10,8 +10,8 @@ description: "Revisa independentemente diffs da campanha de complexidade do Go r
 1. Caracterizacao passou na implementacao original e continua verde.
 2. Diff contem somente extracao estrutural no escopo atribuido.
 3. APIs, erros, logs, metricas, ordem, retries, timeouts, cancelamento e concorrencia nao mudaram.
-4. `gocyclo@v0.6.0 -over 9` e `gocognit@v1.2.1 -over 9 -test` nao listam os arquivos de producao tocados.
-5. Todo helper novo esta `<=9/<=9`.
+4. `gocyclo@v0.6.0 -over 10` e `gocognit@v1.2.1 -over 10 -test` nao listam os arquivos de producao tocados.
+5. Todo helper novo esta `<=10/<=10`.
 6. Testes focais com `-race` e testes do pacote sem race passam.
 7. `make lint`, `go build -mod=readonly ./...` e `git diff --check` passam.
 8. Inventario global reduziu estritamente e nao contem nova violacao.

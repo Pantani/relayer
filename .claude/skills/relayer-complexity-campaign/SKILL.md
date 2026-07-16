@@ -19,7 +19,7 @@ Use os quatro agentes persistentes em `.claude/agents/`. Em runtimes com selecao
 ## Phase 1: snapshot e ownership
 
 1. Exija worktree limpo, `git fetch origin --prune`, base SHA e PRs abertos.
-2. Execute inventario integral com pins `gocyclo@v0.6.0`, `gocognit@v1.2.1`, `-over 9`.
+2. Execute inventario integral com pins `gocyclo@v0.6.0`, `gocognit@v1.2.1`, `-over 10`.
 3. Atualize `_workspace/complexity/{inventory,ownership,ledger}.md`.
 4. Escolha o menor escopo seguro de 1-3 arquivos de producao; registre holder/status do lease e nao compartilhe arquivo/worktree entre editores.
 
@@ -50,7 +50,7 @@ Somente o orquestrador:
 
 ## Condicao terminal
 
-Continue enquanto houver frente segura. Termine somente com ciclo/cognitiva/uniao `0/0/0`, maximos globais `<=9/<=9`, complexity/build/lint/test/race verdes, CI impedindo score `>=10`, todos os PRs abertos e ledger completo. Sem frente segura, reporte apenas um bloqueio que realmente exija decisao, credencial ou autoridade do usuario.
+Continue enquanto houver frente segura. Termine somente com ciclo/cognitiva/uniao `0/0/0`, maximos globais `<=10/<=10`, complexity/build/lint/test/race verdes, CI impedindo score `>10`, todos os PRs abertos e ledger completo. Sem frente segura, reporte apenas um bloqueio que realmente exija decisao, credencial ou autoridade do usuario.
 
 ## Dados e comunicacao
 

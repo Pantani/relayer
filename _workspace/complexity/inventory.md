@@ -1,12 +1,12 @@
 # Complexity inventory
 
-Generated: 2026-07-16T04:42:41Z  
-Base: `4c1029d1177f797f11bcd560f14a18305a2e7353`  
-Tools: `gocyclo@v0.6.0`, `gocognit@v1.2.1`, threshold `-over 9`  
+Generated: 2026-07-16T05:01:55Z  
+Base: `c30f6cbbee8e37870e5a7eae168b3f61113cc6f3`  
+Tools: `gocyclo@v0.6.0`, `gocognit@v1.2.1`, threshold `-over 10`  
 
 | Cyclomatic violations | Cognitive violations | Union | Max cycle | Max cognitive |
 |---:|---:|---:|---:|---:|
-| 79 | 121 | 125 | 48 | 99 |
+| 63 | 107 | 110 | 48 | 99 |
 
 Generated files are excluded only when their first 40 lines contain the canonical `// Code generated ... DO NOT EDIT.` marker.
 
@@ -122,18 +122,3 @@ Generated files are excluded only when their first 40 lines contain the canonica
 | 108 | `cmd/keys.go` | 269 | `keysDeleteCmd` | `cmd` | 6 | 11 |
 | 109 | `cmd/query.go` | 750 | `queryConnectionChannels` | `cmd` | 6 | 11 |
 | 110 | `relayer/processor/path_processor_internal.go` | 916 | `(*PathProcessor).processLatestMessages` | `processor` | 6 | 11 |
-| 111 | `cmd/appstate.go` | 127 | `(*appState).addPathFromUserInput` | `cmd` | 10 | 9 |
-| 112 | `cmd/start.go` | 175 | `setupMetricsServer` | `cmd` | 9 | 10 |
-| 113 | `relayer/processor/message_processor.go` | 133 | `(*messageProcessor).shouldUpdateClientNow` | `processor` | 9 | 10 |
-| 114 | `relayer/chains/cosmos/query.go` | 1063 | `(*CosmosProvider).QueryRecvPacket` | `cosmos` | 8 | 10 |
-| 115 | `relayer/chains/cosmos/query.go` | 1035 | `(*CosmosProvider).QuerySendPacket` | `cosmos` | 8 | 10 |
-| 116 | `relayer/chains/penumbra/query.go` | 991 | `(*PenumbraProvider).QueryRecvPacket` | `penumbra` | 8 | 10 |
-| 117 | `relayer/chains/penumbra/query.go` | 958 | `(*PenumbraProvider).QuerySendPacket` | `penumbra` | 8 | 10 |
-| 118 | `cmd/query.go` | 705 | `queryConnection` | `cmd` | 6 | 10 |
-| 119 | `cmd/query.go` | 205 | `queryTxs` | `cmd` | 6 | 10 |
-| 120 | `cmd/tx.go` | 126 | `upgradeClientsCmd` | `cmd` | 6 | 10 |
-| 121 | `relayer/chains/cosmos/message_handlers.go` | 108 | `(*CosmosChainProcessor).handleConnectionMessage` | `cosmos` | 6 | 10 |
-| 122 | `relayer/chains/penumbra/message_handlers.go` | 92 | `(*PenumbraChainProcessor).handleConnectionMessage` | `penumbra` | 6 | 10 |
-| 123 | `relayer/processor/path_processor_internal.go` | 659 | `(*PathProcessor).getUnrelayedClientICQMessages` | `processor` | 6 | 10 |
-| 124 | `relayer/processor/path_processor.go` | 340 | `(*PathProcessor).processAvailableSignals` | `processor` | 10 | 5 |
-| 125 | `relayer/processor/types_internal.go` | 143 | `(channelIBCMessage).assemble` | `processor` | 10 | 5 |

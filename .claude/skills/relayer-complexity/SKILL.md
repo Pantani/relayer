@@ -1,16 +1,16 @@
 ---
 name: relayer-complexity
-description: "Mede e reduz complexidade ciclomatica e cognitiva do Go relayer com maximo estrito 9/9. Use obrigatoriamente em auditoria, refatoracao, regressao, reexecucao, atualizacao ou melhoria de complexidade; nao use para codigo gerado com marcador canonico."
+description: "Mede e reduz complexidade ciclomatica e cognitiva do Go relayer com maximo estrito 10/10. Use obrigatoriamente em auditoria, refatoracao, regressao, reexecucao, atualizacao ou melhoria de complexidade; nao use para codigo gerado com marcador canonico."
 ---
 
 # Complexidade do relayer
 
 ## Contrato
 
-- Use apenas `gocyclo@v0.6.0` e `gocognit@v1.2.1` com `-over 9`; score 10 e violacao.
+- Use apenas `gocyclo@v0.6.0` e `gocognit@v1.2.1` com `-over 10`; score 10 e aprovado, score 11 e violacao.
 - Audite todo Go manuscrito, incluindo testes. Exclua somente cabecalho com `// Code generated ... DO NOT EDIT.`.
-- A condicao terminal e ciclo/cognitiva/uniao `0/0/0`, maximos `<=9/<=9` e `make complexity` verde.
-- Nao use `nolint`, suppression, allowlist, baseline permissivo, threshold maior ou exclusao por nome.
+- A condicao terminal e ciclo/cognitiva/uniao `0/0/0`, maximos `<=10/<=10` e `make complexity` verde.
+- Nao use `nolint`, suppression, allowlist, baseline permissivo, threshold maior que 10 ou exclusao por nome.
 
 ## Procedimento
 

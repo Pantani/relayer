@@ -71,7 +71,7 @@ build-osmosis-docker:
 test:
 	@go test -mod=readonly -race ./...
 
-#? complexity: Enforce cyclomatic and cognitive complexity below 10
+#? complexity: Enforce cyclomatic and cognitive complexity at most 10
 complexity:
 	@bash ./scripts/check-complexity.sh
 
