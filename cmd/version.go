@@ -25,6 +25,17 @@ type versionInfo struct {
 	Go        string `json:"go" yaml:"go"`
 }
 
+func findCosmosSDKVersion(deps []*debug.Module, fallback string) string {
+	cosmosSDK := fallback
+	for _, dep := range deps {
+		if dep.Path == "github.com/cosmos/cosmos-sdk" {
+			cosmosSDK = dep.Version
+			break
+		}
+	}
+	return cosmosSDK
+}
+
 func getVersionCmd(a *appState) *cobra.Command {
 	versionCmd := &cobra.Command{
 		Use:     "version",
@@ -44,12 +55,7 @@ $ %s v`,
 
 			cosmosSDK := "(unable to determine)"
 			if bi, ok := debug.ReadBuildInfo(); ok {
-				for _, dep := range bi.Deps {
-					if dep.Path == "github.com/cosmos/cosmos-sdk" {
-						cosmosSDK = dep.Version
-						break
-					}
-				}
+				cosmosSDK = findCosmosSDKVersion(bi.Deps, cosmosSDK)
 			}
 
 			commit := Commit
