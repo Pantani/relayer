@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	ckeys "github.com/cosmos/cosmos-sdk/client/keys"
+	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos"
 	"github.com/cosmos/relayer/v2/relayer/provider"
 	"github.com/stretchr/testify/require"
@@ -101,4 +103,54 @@ func TestKeyRestoreSr25519(t *testing.T) {
 	address, err := p.RestoreKey(keyName, mnemonic, coinType, signatureAlgorithm)
 	require.NoError(t, err)
 	require.Equal(t, expectedAddress, address)
+}
+
+func TestKeyRestoreSr25519PersistsAcrossProviderRestart(t *testing.T) {
+	const (
+		keyName         = "persisted_sei_key"
+		mnemonic        = "three elevator silk family street child flip also leaf inmate call frame shock little legal october vivid enable fetch siege sell burger dolphin green"
+		expectedAddress = "sei1th80nzvgkzg7reehtyp4xm39xerqg6z77ymcnx"
+	)
+	homePath := t.TempDir()
+	config := cosmos.CosmosProviderConfig{
+		ChainID:        "test",
+		KeyringBackend: "test",
+		Timeout:        "10s",
+		AccountPrefix:  "sei",
+	}
+
+	first, err := config.NewProvider(zap.NewNop(), homePath, true, "test_chain")
+	require.NoError(t, err)
+	require.NoError(t, first.CreateKeystore(homePath))
+	address, err := first.RestoreKey(keyName, mnemonic, 118, "sr25519")
+	require.NoError(t, err)
+	require.Equal(t, expectedAddress, address)
+
+	reopened, err := config.NewProvider(zap.NewNop(), homePath, true, "test_chain")
+	require.NoError(t, err)
+	require.NoError(t, reopened.CreateKeystore(homePath))
+	address, err = reopened.ShowAddress(keyName)
+	require.NoError(t, err)
+	require.Equal(t, expectedAddress, address)
+
+	cosmosProvider := reopened.(*cosmos.CosmosProvider)
+	message := []byte("sign after reopening keyring")
+	signature, publicKey, err := cosmosProvider.Keybase.Sign(keyName, message, signing.SignMode_SIGN_MODE_DIRECT)
+	require.NoError(t, err)
+	require.True(t, publicKey.VerifySignature(message, signature))
+
+	armor, err := cosmosProvider.ExportPrivKeyArmor(keyName)
+	require.NoError(t, err)
+	importHome := t.TempDir()
+	imported, err := config.NewProvider(zap.NewNop(), importHome, true, "imported_test_chain")
+	require.NoError(t, err)
+	require.NoError(t, imported.CreateKeystore(importHome))
+	importedProvider := imported.(*cosmos.CosmosProvider)
+	require.NoError(t, importedProvider.Keybase.ImportPrivKey("imported_sei_key", armor, ckeys.DefaultKeyPass))
+	address, err = imported.ShowAddress("imported_sei_key")
+	require.NoError(t, err)
+	require.Equal(t, expectedAddress, address)
+	signature, publicKey, err = importedProvider.Keybase.Sign("imported_sei_key", message, signing.SignMode_SIGN_MODE_DIRECT)
+	require.NoError(t, err)
+	require.True(t, publicKey.VerifySignature(message, signature))
 }

@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"github.com/cosmos/cosmos-sdk/types/module/testutil"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
 	rlystride "github.com/cosmos/relayer/v2/relayer/chains/cosmos/stride"
 	"github.com/icza/dyno"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
 )
 
 const (

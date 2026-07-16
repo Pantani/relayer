@@ -3,10 +3,10 @@ package interchaintest
 import (
 	"testing"
 
-	"github.com/docker/docker/client"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	interchaintestrelayer "github.com/strangelove-ventures/interchaintest/v8/relayer"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	interchaintestrelayer "github.com/cosmos/interchaintest/v11/relayer"
+	"github.com/moby/moby/client"
 )
 
 // RelayerFactory implements the interchaintest RelayerFactory interface.

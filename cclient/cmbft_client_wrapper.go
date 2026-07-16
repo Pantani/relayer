@@ -8,7 +8,6 @@ import (
 	ced25519 "github.com/cometbft/cometbft/crypto/ed25519"
 	"github.com/cometbft/cometbft/crypto/merkle"
 	csecp256k1 "github.com/cometbft/cometbft/crypto/secp256k1"
-	csr25519 "github.com/cometbft/cometbft/crypto/sr25519"
 	"github.com/cometbft/cometbft/libs/bytes"
 	"github.com/cometbft/cometbft/p2p"
 	"github.com/cometbft/cometbft/proto/tendermint/crypto"
@@ -572,7 +571,7 @@ func convertPubKey(pk slcrypto.PubKey) cometcrypto.PubKey {
 	case secp256k1.PubKey:
 		return csecp256k1.PubKey(key)
 	case sr25519.PubKey:
-		return csr25519.PubKey(key)
+		return newSR25519PubKey(key.Bytes())
 	default:
 		return nil
 	}

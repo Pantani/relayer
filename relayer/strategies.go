@@ -10,7 +10,7 @@ import (
 
 	"github.com/avast/retry-go/v4"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
+	"github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos"
 	penumbraprocessor "github.com/cosmos/relayer/v2/relayer/chains/penumbra"
 	"github.com/cosmos/relayer/v2/relayer/processor"
@@ -50,6 +50,45 @@ func StartRelayer(
 	metrics *processor.PrometheusMetrics,
 	stuckPacket *processor.StuckPacket,
 ) chan error {
+	if err := ensureClassicRuntime(paths); err != nil {
+		return closedErrorChannel(err)
+	}
+	return startClassicRelayer(
+		ctx,
+		log,
+		chains,
+		paths,
+		maxMsgLength,
+		maxReceiverSize,
+		memoLimit,
+		memo,
+		clientUpdateThresholdTime,
+		flushInterval,
+		messageLifecycle,
+		processorType,
+		initialBlockHistory,
+		metrics,
+		stuckPacket,
+	)
+}
+
+func startClassicRelayer(
+	ctx context.Context,
+	log *zap.Logger,
+	chains map[string]*Chain,
+	paths []NamedPath,
+	maxMsgLength uint64,
+	maxReceiverSize,
+	memoLimit int,
+	memo string,
+	clientUpdateThresholdTime time.Duration,
+	flushInterval time.Duration,
+	messageLifecycle processor.MessageLifecycle,
+	processorType string,
+	initialBlockHistory uint64,
+	metrics *processor.PrometheusMetrics,
+	stuckPacket *processor.StuckPacket,
+) chan error {
 	// prevent incorrect bech32 address prefixed addresses when calling AccAddress.String()
 	sdk.SetAddrCacheEnabled(false)
 	errorChan := make(chan error, 1)
@@ -62,43 +101,11 @@ func StartRelayer(
 			chainProcessors = append(chainProcessors, chain.chainProcessor(log, metrics))
 		}
 
-		ePaths := make([]path, len(paths))
-		for i, np := range paths {
-			pathName := np.Name
-			p := np.Path
-
-			filter := p.Filter
-			var filterSrc, filterDst []processor.ChainChannelKey
-
-			for _, ch := range filter.ChannelList {
-				ruleSrc := processor.ChainChannelKey{
-					ChainID: p.Src.ChainID,
-					ChannelKey: processor.ChannelKey{
-						ChannelID: ch,
-					},
-				}
-
-				ruleDst := processor.ChainChannelKey{
-					CounterpartyChainID: p.Src.ChainID,
-					ChannelKey: processor.ChannelKey{
-						CounterpartyChannelID: ch,
-					},
-				}
-
-				filterSrc = append(filterSrc, ruleSrc)
-				filterDst = append(filterDst, ruleDst)
-			}
-			ePaths[i] = path{
-				src: processor.NewPathEnd(pathName, p.Src.ChainID, p.Src.ClientID, filter.Rule, filterSrc),
-				dst: processor.NewPathEnd(pathName, p.Dst.ChainID, p.Dst.ClientID, filter.Rule, filterDst),
-			}
-		}
-
 		go relayerStartEventProcessor(
 			ctx,
 			log,
 			chainProcessors,
-			ePaths,
+			eventProcessorPaths(paths),
 			initialBlockHistory,
 			maxMsgLength,
 			maxReceiverSize,
@@ -127,11 +134,58 @@ func StartRelayer(
 	}
 }
 
+func ensureClassicRuntime(paths []NamedPath) error {
+	for _, namedPath := range paths {
+		if err := namedPath.Path.EnsureClassicRuntime(); err != nil {
+			return fmt.Errorf("path %q: %w", namedPath.Name, err)
+		}
+	}
+	return nil
+}
+
+func closedErrorChannel(err error) chan error {
+	errorChan := make(chan error, 1)
+	errorChan <- err
+	close(errorChan)
+	return errorChan
+}
+
 // TODO: intermediate types. Should combine/replace with the relayer.Chain, relayer.Path, and relayer.PathEnd structs
 // as the stateless and stateful/event-based relaying mechanisms are consolidated.
 type path struct {
 	src processor.PathEnd
 	dst processor.PathEnd
+}
+
+func eventProcessorPaths(namedPaths []NamedPath) []path {
+	paths := make([]path, len(namedPaths))
+	for i, namedPath := range namedPaths {
+		filterSrc, filterDst := eventProcessorFilters(namedPath.Path)
+		paths[i] = path{
+			src: processor.NewPathEnd(namedPath.Name, namedPath.Path.Src.ChainID, namedPath.Path.Src.ClientID, namedPath.Path.Filter.Rule, filterSrc),
+			dst: processor.NewPathEnd(namedPath.Name, namedPath.Path.Dst.ChainID, namedPath.Path.Dst.ClientID, namedPath.Path.Filter.Rule, filterDst),
+		}
+	}
+	return paths
+}
+
+func eventProcessorFilters(relayPath *Path) ([]processor.ChainChannelKey, []processor.ChainChannelKey) {
+	var filterSrc, filterDst []processor.ChainChannelKey
+	for _, channelID := range relayPath.Filter.ChannelList {
+		filterSrc = append(filterSrc, processor.ChainChannelKey{
+			ChainID: relayPath.Src.ChainID,
+			ChannelKey: processor.ChannelKey{
+				ChannelID: channelID,
+			},
+		})
+		filterDst = append(filterDst, processor.ChainChannelKey{
+			CounterpartyChainID: relayPath.Src.ChainID,
+			ChannelKey: processor.ChannelKey{
+				CounterpartyChannelID: channelID,
+			},
+		})
+	}
+	return filterSrc, filterDst
 }
 
 // chainProcessor returns the corresponding ChainProcessor implementation instance for a pathChain.

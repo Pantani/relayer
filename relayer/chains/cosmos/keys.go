@@ -95,7 +95,7 @@ func (cc *CosmosProvider) KeyAddOrRestore(keyName string, coinType uint32, signi
 
 	var algo keyring.SignatureAlgo
 	switch signingAlgorithm {
-	case string(hd.Sr25519Type):
+	case string(sr25519.Sr25519.Name()):
 		algo = sr25519.Sr25519
 	default:
 		algo = hd.Secp256k1

@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/conformance"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/testreporter"
 	relayerinterchaintest "github.com/cosmos/relayer/v2/interchaintest"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/conformance"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -28,6 +29,7 @@ func TestScenarioTendermint37Boundary(t *testing.T) {
 			Version:       "v14.1.0",
 			NumValidators: &nv,
 			NumFullNodes:  &nf,
+			ChainConfig:   gaiaChainConfig("v14.1.0", ibc.ChainConfig{}),
 		},
 		{
 			// TODO update with mainnet SDK v0.47+ chain version once available

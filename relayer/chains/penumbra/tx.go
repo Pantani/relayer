@@ -10,7 +10,6 @@ import (
 	"time"
 
 	sdkerrors "cosmossdk.io/errors"
-	"cosmossdk.io/store/rootmulti"
 	"github.com/avast/retry-go/v4"
 	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/cometbft/cometbft/libs/bytes"
@@ -20,17 +19,18 @@ import (
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	tmtypes "github.com/cometbft/cometbft/types"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/store/v2/rootmulti"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	legacyerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	cosmosproto "github.com/cosmos/gogoproto/proto"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	conntypes "github.com/cosmos/ibc-go/v8/modules/core/03-connection/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
-	commitmenttypes "github.com/cosmos/ibc-go/v8/modules/core/23-commitment/types"
-	host "github.com/cosmos/ibc-go/v8/modules/core/24-host"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
-	tmclient "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	conntypes "github.com/cosmos/ibc-go/v11/modules/core/03-connection/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	commitmenttypes "github.com/cosmos/ibc-go/v11/modules/core/23-commitment/types"
+	host "github.com/cosmos/ibc-go/v11/modules/core/24-host"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
+	tmclient "github.com/cosmos/ibc-go/v11/modules/light-clients/07-tendermint"
 	ics23 "github.com/cosmos/ics23/go"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos"
 	penumbrafee "github.com/cosmos/relayer/v2/relayer/chains/penumbra/core/component/fee/v1"
@@ -576,6 +576,10 @@ func (cc *PenumbraProvider) ConnectionOpenTry(ctx context.Context, dstQueryProvi
 	if err != nil {
 		return nil, err
 	}
+	consensusHeight, err := provider.ClientStateLatestHeight(clientState)
+	if err != nil {
+		return nil, err
+	}
 
 	counterparty := conntypes.Counterparty{
 		ClientId:     dstClientId,
@@ -598,7 +602,7 @@ func (cc *PenumbraProvider) ConnectionOpenTry(ctx context.Context, dstQueryProvi
 		ProofInit:       connStateProof,
 		ProofClient:     clientStateProof,
 		ProofConsensus:  consensusStateProof,
-		ConsensusHeight: clientState.GetLatestHeight().(clienttypes.Height),
+		ConsensusHeight: consensusHeight,
 		Signer:          acc,
 	}
 
@@ -637,6 +641,10 @@ func (cc *PenumbraProvider) ConnectionOpenAck(ctx context.Context, dstQueryProvi
 	if err != nil {
 		return nil, err
 	}
+	consensusHeight, err := provider.ClientStateLatestHeight(clientState)
+	if err != nil {
+		return nil, err
+	}
 
 	msg := &conntypes.MsgConnectionOpenAck{
 		ConnectionId:             srcConnId,
@@ -650,7 +658,7 @@ func (cc *PenumbraProvider) ConnectionOpenAck(ctx context.Context, dstQueryProvi
 		ProofTry:        connStateProof,
 		ProofClient:     clientStateProof,
 		ProofConsensus:  consensusStateProof,
-		ConsensusHeight: clientState.GetLatestHeight().(clienttypes.Height),
+		ConsensusHeight: consensusHeight,
 		Signer:          acc,
 	}
 
@@ -929,7 +937,7 @@ func (cc *PenumbraProvider) MsgSubmitMisbehaviour(clientID string, misbehaviour 
 		return nil, err
 	}
 
-	msg, err := clienttypes.NewMsgSubmitMisbehaviour(clientID, misbehaviour, signer)
+	msg, err := clienttypes.NewMsgUpdateClient(clientID, misbehaviour, signer)
 	if err != nil {
 		return nil, err
 	}
@@ -1377,6 +1385,10 @@ func (cc *PenumbraProvider) MsgConnectionOpenTry(msgOpenInit provider.Connection
 	if err != nil {
 		return nil, err
 	}
+	consensusHeight, err := provider.ClientStateLatestHeight(proof.ClientState)
+	if err != nil {
+		return nil, err
+	}
 
 	counterparty := conntypes.Counterparty{
 		ClientId:     msgOpenInit.ClientID,
@@ -1395,7 +1407,7 @@ func (cc *PenumbraProvider) MsgConnectionOpenTry(msgOpenInit provider.Connection
 		ProofInit:            proof.ConnectionStateProof,
 		ProofClient:          proof.ClientStateProof,
 		ProofConsensus:       proof.ConsensusStateProof,
-		ConsensusHeight:      proof.ClientState.GetLatestHeight().(clienttypes.Height),
+		ConsensusHeight:      consensusHeight,
 		Signer:               signer,
 	}
 
@@ -1414,6 +1426,10 @@ func (cc *PenumbraProvider) MsgConnectionOpenAck(msgOpenTry provider.ConnectionI
 	if err != nil {
 		return nil, err
 	}
+	consensusHeight, err := provider.ClientStateLatestHeight(proof.ClientState)
+	if err != nil {
+		return nil, err
+	}
 
 	msg := &conntypes.MsgConnectionOpenAck{
 		ConnectionId:             msgOpenTry.CounterpartyConnID,
@@ -1427,7 +1443,7 @@ func (cc *PenumbraProvider) MsgConnectionOpenAck(msgOpenTry provider.ConnectionI
 		ProofTry:        proof.ConnectionStateProof,
 		ProofClient:     proof.ClientStateProof,
 		ProofConsensus:  proof.ConsensusStateProof,
-		ConsensusHeight: proof.ClientState.GetLatestHeight().(clienttypes.Height),
+		ConsensusHeight: consensusHeight,
 		Signer:          signer,
 	}
 
@@ -1936,7 +1952,10 @@ func (cc *PenumbraProvider) InjectTrustedFields(ctx context.Context, header ibce
 	}
 
 	// inject TrustedHeight as latest height stored on dst client
-	h.TrustedHeight = cs.GetLatestHeight().(clienttypes.Height)
+	h.TrustedHeight, err = provider.ClientStateLatestHeight(cs)
+	if err != nil {
+		return nil, err
+	}
 
 	// NOTE: We need to get validators from the source chain at height: trustedHeight+1
 	// since the last trusted validators for a header at height h is the NextValidators
@@ -2291,6 +2310,5 @@ func (cc *PenumbraProvider) SendMessagesToMempool(ctx context.Context, msgs []pr
 
 // MsgRegisterCounterpartyPayee creates an sdk.Msg to broadcast the counterparty address
 func (cc *PenumbraProvider) MsgRegisterCounterpartyPayee(portID, channelID, relayerAddr, counterpartyPayee string) (provider.RelayerMessage, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, fmt.Errorf("penumbra provider does not support ICS-29 counterparty payee registration")
 }

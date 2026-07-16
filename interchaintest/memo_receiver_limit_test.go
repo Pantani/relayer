@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	sdkmath "cosmossdk.io/math"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	"github.com/cosmos/relayer/v2/cmd"
 	relayertest "github.com/cosmos/relayer/v2/interchaintest"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 	"gopkg.in/yaml.v3"
@@ -32,7 +32,7 @@ func TestMemoAndReceiverLimit(t *testing.T) {
 	image := ibc.DockerImage{
 		Repository: "ghcr.io/cosmos/ibc-go-simd",
 		Version:    "v8.0.0",
-		UidGid:     "100:1000",
+		UIDGID:     "100:1000",
 	}
 
 	cf := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), []*interchaintest.ChainSpec{
@@ -211,7 +211,7 @@ func TestMemoAndReceiverLimit(t *testing.T) {
 		channel.Counterparty.ChannelID,
 		chainA.Config().Denom,
 	)
-	trace := transfertypes.ParseDenomTrace(denom)
+	trace := transfertypes.ExtractDenomFromPath(denom)
 
 	userABal, err = chainA.GetBalance(ctx, userA.FormattedAddress(), chainA.Config().Denom)
 	require.NoError(t, err)

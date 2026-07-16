@@ -54,45 +54,53 @@ func (s ethSecp256k1Algo) Name() hd.PubKeyType {
 
 // Derive derives and returns the eth_secp256k1 private key for the given mnemonic and HD path.
 func (s ethSecp256k1Algo) Derive() hd.DeriveFn {
-	return func(mnemonic, bip39Passphrase, path string) ([]byte, error) {
-		hdpath, err := accounts.ParseDerivationPath(path)
-		if err != nil {
-			return nil, err
-		}
+	return deriveEthSecp256k1
+}
 
-		seed, err := bip39.NewSeedWithErrorChecking(mnemonic, bip39Passphrase)
-		if err != nil {
-			return nil, err
-		}
-
-		// create a BTC-utils hd-derivation key chain
-		masterKey, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
-		if err != nil {
-			return nil, err
-		}
-
-		key := masterKey
-		for _, n := range hdpath {
-			key, err = key.Derive(n)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		// btc-utils representation of a secp256k1 private key
-		privateKey, err := key.ECPrivKey()
-		if err != nil {
-			return nil, err
-		}
-
-		// cast private key to a convertible form (single scalar field element of secp256k1)
-		// and then load into ethcrypto private key format.
-		// TODO: add links to godocs of the two methods or implementations of them, to compare equivalency
-		privateKeyECDSA := privateKey.ToECDSA()
-		derivedKey := crypto.FromECDSA(privateKeyECDSA)
-
-		return derivedKey, nil
+func deriveEthSecp256k1(mnemonic, bip39Passphrase, path string) ([]byte, error) {
+	hdpath, err := accounts.ParseDerivationPath(path)
+	if err != nil {
+		return nil, err
 	}
+
+	seed, err := bip39.NewSeedWithErrorChecking(mnemonic, bip39Passphrase)
+	if err != nil {
+		return nil, err
+	}
+
+	// create a BTC-utils hd-derivation key chain
+	key, err := hdkeychain.NewMaster(seed, &chaincfg.MainNetParams)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err = derivePath(key, hdpath)
+	if err != nil {
+		return nil, err
+	}
+
+	// btc-utils representation of a secp256k1 private key
+	privateKey, err := key.ECPrivKey()
+	if err != nil {
+		return nil, err
+	}
+
+	// cast private key to a convertible form (single scalar field element of secp256k1)
+	// and then load into ethcrypto private key format.
+	// TODO: add links to godocs of the two methods or implementations of them, to compare equivalency
+	return crypto.FromECDSA(privateKey.ToECDSA()), nil
+}
+
+func derivePath(key *hdkeychain.ExtendedKey, path accounts.DerivationPath) (*hdkeychain.ExtendedKey, error) {
+	var err error
+	for _, child := range path {
+		key, err = key.Derive(child)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return key, nil
 }
 
 // Generate generates a eth_secp256k1 private key from the given bytes.

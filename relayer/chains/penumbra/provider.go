@@ -18,10 +18,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/gogoproto/proto"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
-	commitmenttypes "github.com/cosmos/ibc-go/v8/modules/core/23-commitment/types"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
-	tmclient "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	commitmenttypes "github.com/cosmos/ibc-go/v11/modules/core/23-commitment/types"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
+	tmclient "github.com/cosmos/ibc-go/v11/modules/light-clients/07-tendermint"
 	"github.com/cosmos/relayer/v2/cclient"
 	"github.com/cosmos/relayer/v2/relayer/codecs/ethermint"
 	"github.com/cosmos/relayer/v2/relayer/provider"
@@ -110,7 +110,7 @@ func (pc PenumbraProviderConfig) NewProvider(log *zap.Logger, homepath string, d
 		Output:         os.Stdout,
 
 		// TODO: this is a bit of a hack, we should probably have a better way to inject modules
-		Codec:     makeCodec(pc.Modules, pc.ExtraCodecs),
+		Codec:     makeCodec(pc.Modules, pc.ExtraCodecs, pc.AccountPrefix),
 		RPCCaller: rc,
 	}, nil
 }

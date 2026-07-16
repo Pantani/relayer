@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/x/auth/migrations/legacytx"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -68,48 +69,26 @@ func isValidEIP712Payload(typedData apitypes.TypedData) bool {
 // decodeAminoSignDoc attempts to decode the provided sign doc (bytes) as an Amino payload
 // and returns a signable EIP-712 TypedData object.
 func decodeAminoSignDoc(signDocBytes []byte) (apitypes.TypedData, error) {
-	// Ensure codecs have been initialized
 	if err := validateCodecInit(); err != nil {
 		return apitypes.TypedData{}, err
 	}
 
-	var aminoDoc legacytx.StdSignDoc
-	if err := aminoCodec.UnmarshalJSON(signDocBytes, &aminoDoc); err != nil {
+	aminoDoc, err := decodeAminoDocument(signDocBytes)
+	if err != nil {
 		return apitypes.TypedData{}, err
 	}
 
-	var fees legacytx.StdFee
-	if err := aminoCodec.UnmarshalJSON(aminoDoc.Fee, &fees); err != nil {
+	msgs, err := decodeAminoMessages(aminoDoc.Msgs)
+	if err != nil {
 		return apitypes.TypedData{}, err
-	}
-
-	// Validate payload messages
-	msgs := make([]sdk.Msg, len(aminoDoc.Msgs))
-	for i, jsonMsg := range aminoDoc.Msgs {
-		var m sdk.Msg
-		if err := aminoCodec.UnmarshalJSON(jsonMsg, &m); err != nil {
-			return apitypes.TypedData{}, fmt.Errorf("failed to unmarshal sign doc message: %w", err)
-		}
-		msgs[i] = m
 	}
 
 	if err := validatePayloadMessages(msgs); err != nil {
 		return apitypes.TypedData{}, err
 	}
 
-	// Use first message for fee payer and type inference
 	msg := msgs[0]
-
-	// By convention, the fee payer is the first address in the list of signers.
-	signers, _, err := protoCodec.GetMsgV1Signers(msg)
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-
-	signer := signers[0]
-
-	var feePayer sdk.AccAddress
-	err = feePayer.Unmarshal(signer)
+	feePayer, err := feePayerForMessage(msg)
 	if err != nil {
 		return apitypes.TypedData{}, err
 	}
@@ -137,57 +116,133 @@ func decodeAminoSignDoc(signDocBytes []byte) (apitypes.TypedData, error) {
 	return typedData, nil
 }
 
+func decodeAminoDocument(signDocBytes []byte) (legacytx.StdSignDoc, error) {
+	var aminoDoc legacytx.StdSignDoc
+	if err := aminoCodec.UnmarshalJSON(signDocBytes, &aminoDoc); err != nil {
+		return legacytx.StdSignDoc{}, err
+	}
+
+	var fees legacytx.StdFee
+	if err := aminoCodec.UnmarshalJSON(aminoDoc.Fee, &fees); err != nil {
+		return legacytx.StdSignDoc{}, err
+	}
+
+	return aminoDoc, nil
+}
+
+func decodeAminoMessages(jsonMessages []json.RawMessage) ([]sdk.Msg, error) {
+	msgs := make([]sdk.Msg, len(jsonMessages))
+	for i, jsonMsg := range jsonMessages {
+		var msg sdk.Msg
+		if err := aminoCodec.UnmarshalJSON(jsonMsg, &msg); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal sign doc message: %w", err)
+		}
+		msgs[i] = msg
+	}
+
+	return msgs, nil
+}
+
+func feePayerForMessage(msg sdk.Msg) (sdk.AccAddress, error) {
+	// By convention, the fee payer is the first address in the list of signers.
+	signers, _, err := protoCodec.GetMsgV1Signers(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	var feePayer sdk.AccAddress
+	if err := feePayer.Unmarshal(signers[0]); err != nil {
+		return nil, err
+	}
+
+	return feePayer, nil
+}
+
 // decodeProtobufSignDoc attempts to decode the provided sign doc (bytes) as a Protobuf payload
 // and returns a signable EIP-712 TypedData object.
 func decodeProtobufSignDoc(signDocBytes []byte) (apitypes.TypedData, error) {
-	// Ensure codecs have been initialized
 	if err := validateCodecInit(); err != nil {
 		return apitypes.TypedData{}, err
 	}
 
-	signDoc := &txTypes.SignDoc{}
-	if err := signDoc.Unmarshal(signDocBytes); err != nil {
+	signDoc, authInfo, body, err := decodeProtobufDocument(signDocBytes)
+	if err != nil {
 		return apitypes.TypedData{}, err
 	}
 
-	authInfo := &txTypes.AuthInfo{}
-	if err := authInfo.Unmarshal(signDoc.AuthInfoBytes); err != nil {
+	if err := validateProtobufEnvelope(authInfo, body); err != nil {
 		return apitypes.TypedData{}, err
 	}
 
-	body := &txTypes.TxBody{}
-	if err := body.Unmarshal(signDoc.BodyBytes); err != nil {
+	msgs, err := unpackProtobufMessages(body.Messages)
+	if err != nil {
 		return apitypes.TypedData{}, err
-	}
-
-	// Until support for these fields is added, throw an error at their presence
-	if body.TimeoutHeight != 0 || len(body.ExtensionOptions) != 0 || len(body.NonCriticalExtensionOptions) != 0 {
-		return apitypes.TypedData{}, errors.New("body contains unsupported fields: TimeoutHeight, ExtensionOptions, or NonCriticalExtensionOptions")
-	}
-
-	if len(authInfo.SignerInfos) != 1 {
-		return apitypes.TypedData{}, fmt.Errorf("invalid number of signer infos provided, expected 1 got %v", len(authInfo.SignerInfos))
-	}
-
-	// Validate payload messages
-	msgs := make([]sdk.Msg, len(body.Messages))
-	for i, protoMsg := range body.Messages {
-		var m sdk.Msg
-		if err := protoCodec.UnpackAny(protoMsg, &m); err != nil {
-			return apitypes.TypedData{}, fmt.Errorf("could not unpack message object with error %w", err)
-		}
-		msgs[i] = m
 	}
 
 	if err := validatePayloadMessages(msgs); err != nil {
 		return apitypes.TypedData{}, err
 	}
 
-	// Use first message for fee payer and type inference
+	return buildProtobufTypedData(signDoc, authInfo, body, msgs)
+}
+
+func decodeProtobufDocument(signDocBytes []byte) (*txTypes.SignDoc, *txTypes.AuthInfo, *txTypes.TxBody, error) {
+	signDoc := &txTypes.SignDoc{}
+	if err := signDoc.Unmarshal(signDocBytes); err != nil {
+		return nil, nil, nil, err
+	}
+
+	authInfo := &txTypes.AuthInfo{}
+	if err := authInfo.Unmarshal(signDoc.AuthInfoBytes); err != nil {
+		return nil, nil, nil, err
+	}
+
+	body := &txTypes.TxBody{}
+	if err := body.Unmarshal(signDoc.BodyBytes); err != nil {
+		return nil, nil, nil, err
+	}
+
+	return signDoc, authInfo, body, nil
+}
+
+func validateProtobufEnvelope(authInfo *txTypes.AuthInfo, body *txTypes.TxBody) error {
+	// Until support for these fields is added, throw an error at their presence.
+	if body.TimeoutHeight != 0 || len(body.ExtensionOptions) != 0 || len(body.NonCriticalExtensionOptions) != 0 {
+		return errors.New("body contains unsupported fields: TimeoutHeight, ExtensionOptions, or NonCriticalExtensionOptions")
+	}
+
+	if authInfo.Fee == nil {
+		return errors.New("auth info fee is required")
+	}
+
+	if len(authInfo.SignerInfos) != 1 {
+		return fmt.Errorf("invalid number of signer infos provided, expected 1 got %v", len(authInfo.SignerInfos))
+	}
+
+	return nil
+}
+
+func unpackProtobufMessages(protoMessages []*codectypes.Any) ([]sdk.Msg, error) {
+	msgs := make([]sdk.Msg, len(protoMessages))
+	for i, protoMsg := range protoMessages {
+		var msg sdk.Msg
+		if err := protoCodec.UnpackAny(protoMsg, &msg); err != nil {
+			return nil, fmt.Errorf("could not unpack message object with error %w", err)
+		}
+		msgs[i] = msg
+	}
+
+	return msgs, nil
+}
+
+func buildProtobufTypedData(
+	signDoc *txTypes.SignDoc,
+	authInfo *txTypes.AuthInfo,
+	body *txTypes.TxBody,
+	msgs []sdk.Msg,
+) (apitypes.TypedData, error) {
 	msg := msgs[0]
-
 	signerInfo := authInfo.SignerInfos[0]
-
 	chainID, err := ParseChainID(signDoc.ChainId)
 	if err != nil {
 		return apitypes.TypedData{}, fmt.Errorf("invalid chain ID passed as argument: %w", err)
@@ -198,15 +253,7 @@ func decodeProtobufSignDoc(signDocBytes []byte) (apitypes.TypedData, error) {
 		Gas:    authInfo.Fee.GasLimit,
 	}
 
-	signers, _, err := protoCodec.GetMsgV1Signers(msg)
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-
-	signer := signers[0]
-
-	var feePayer sdk.AccAddress
-	err = feePayer.Unmarshal(signer)
+	feePayer, err := feePayerForMessage(msg)
 	if err != nil {
 		return apitypes.TypedData{}, err
 	}
@@ -257,45 +304,60 @@ func validatePayloadMessages(msgs []sdk.Msg) error {
 		return errors.New("unable to build EIP-712 payload: transaction does contain any messages")
 	}
 
-	var msgType string
-	var msgSigner sdk.AccAddress
+	expected, err := payloadMessageDetails(msgs[0])
+	if err != nil {
+		return err
+	}
 
-	for i, m := range msgs {
-		t, err := getMsgType(m)
-		if err != nil {
+	for _, msg := range msgs[1:] {
+		if err := validateMatchingPayloadMessage(msg, expected); err != nil {
 			return err
 		}
+	}
 
-		signers, _, err := protoCodec.GetMsgV1Signers(m)
-		if err != nil {
-			return err
-		}
+	return nil
+}
 
-		if len(signers) != 1 {
-			return errors.New("unable to build EIP-712 payload: expect exactly 1 signer")
-		}
+type payloadMessage struct {
+	typ    string
+	signer sdk.AccAddress
+}
 
-		signer := signers[0]
+func payloadMessageDetails(msg sdk.Msg) (payloadMessage, error) {
+	msgType, err := getMsgType(msg)
+	if err != nil {
+		return payloadMessage{}, err
+	}
 
-		var feePayer sdk.AccAddress
-		err = feePayer.Unmarshal(signer)
-		if err != nil {
-			return err
-		}
+	signers, _, err := protoCodec.GetMsgV1Signers(msg)
+	if err != nil {
+		return payloadMessage{}, err
+	}
 
-		if i == 0 {
-			msgType = t
-			msgSigner = feePayer
-			continue
-		}
+	if len(signers) != 1 {
+		return payloadMessage{}, errors.New("unable to build EIP-712 payload: expect exactly 1 signer")
+	}
 
-		if t != msgType {
-			return errors.New("unable to build EIP-712 payload: different types of messages detected")
-		}
+	var signer sdk.AccAddress
+	if err := signer.Unmarshal(signers[0]); err != nil {
+		return payloadMessage{}, err
+	}
 
-		if !msgSigner.Equals(feePayer) {
-			return errors.New("unable to build EIP-712 payload: multiple signers detected")
-		}
+	return payloadMessage{typ: msgType, signer: signer}, nil
+}
+
+func validateMatchingPayloadMessage(msg sdk.Msg, expected payloadMessage) error {
+	actual, err := payloadMessageDetails(msg)
+	if err != nil {
+		return err
+	}
+
+	if actual.typ != expected.typ {
+		return errors.New("unable to build EIP-712 payload: different types of messages detected")
+	}
+
+	if !expected.signer.Equals(actual.signer) {
+		return errors.New("unable to build EIP-712 payload: multiple signers detected")
 	}
 
 	return nil

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	sdkmath "cosmossdk.io/math"
-	"cosmossdk.io/x/upgrade"
 	sdktest "github.com/cosmos/cosmos-sdk/types/module/testutil"
 	"github.com/cosmos/cosmos-sdk/x/auth"
 	"github.com/cosmos/cosmos-sdk/x/bank"
@@ -22,21 +21,21 @@ import (
 	paramsclient "github.com/cosmos/cosmos-sdk/x/params/client"
 	"github.com/cosmos/cosmos-sdk/x/slashing"
 	"github.com/cosmos/cosmos-sdk/x/staking"
-	"github.com/cosmos/ibc-go/modules/capability"
-	ica "github.com/cosmos/ibc-go/v8/modules/apps/27-interchain-accounts"
-	icatypes "github.com/cosmos/ibc-go/v8/modules/apps/27-interchain-accounts/types"
-	"github.com/cosmos/ibc-go/v8/modules/apps/transfer"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
-	ibccore "github.com/cosmos/ibc-go/v8/modules/core"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
-	ibctm "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	"github.com/cosmos/cosmos-sdk/x/upgrade"
+	ica "github.com/cosmos/ibc-go/v11/modules/apps/27-interchain-accounts"
+	icatypes "github.com/cosmos/ibc-go/v11/modules/apps/27-interchain-accounts/types"
+	"github.com/cosmos/ibc-go/v11/modules/apps/transfer"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	ibccore "github.com/cosmos/ibc-go/v11/modules/core"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
+	ibctm "github.com/cosmos/ibc-go/v11/modules/light-clients/07-tendermint"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	ibcwasm "github.com/cosmos/interchaintest/v11/chain/cosmos/08-wasm-types"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	relayertest "github.com/cosmos/relayer/v2/interchaintest"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	ibcwasm "github.com/strangelove-ventures/interchaintest/v8/chain/cosmos/08-wasm-types"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
@@ -46,7 +45,6 @@ func DefaultEncoding() sdktest.TestEncodingConfig {
 		auth.AppModuleBasic{},
 		genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
 		bank.AppModuleBasic{},
-		capability.AppModuleBasic{},
 		staking.AppModuleBasic{},
 		mint.AppModuleBasic{},
 		distr.AppModuleBasic{},
@@ -79,7 +77,7 @@ func TestLocalhost_TokenTransfers(t *testing.T) {
 	image := ibc.DockerImage{
 		Repository: "ghcr.io/cosmos/ibc-go-simd",
 		Version:    "v8.0.0",
-		UidGid:     "100:1000",
+		UIDGID:     "100:1000",
 	}
 	cdc := DefaultEncoding()
 	cf := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), []*interchaintest.ChainSpec{
@@ -193,7 +191,7 @@ func TestLocalhost_TokenTransfers(t *testing.T) {
 
 	// compose the ibc denom for balance assertions
 	denom := transfertypes.GetPrefixedDenom(channel.Counterparty.PortID, channel.Counterparty.ChannelID, chainA.Config().Denom)
-	trace := transfertypes.ParseDenomTrace(denom)
+	trace := transfertypes.ExtractDenomFromPath(denom)
 
 	// start the relayer
 	require.NoError(t, r.StartRelayer(ctx, eRep, pathLocalhost))
@@ -295,7 +293,7 @@ func TestLocalhost_InterchainAccounts(t *testing.T) {
 	image := ibc.DockerImage{
 		Repository: "ghcr.io/cosmos/ibc-go-simd",
 		Version:    "v8.0.0-beta.1",
-		UidGid:     "100:1000",
+		UIDGID:     "100:1000",
 	}
 	cdc := cosmos.DefaultEncoding()
 	cf := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), []*interchaintest.ChainSpec{

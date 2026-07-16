@@ -11,14 +11,14 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/types"
+	interchaintestcosmos "github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/relayer/rly"
 	"github.com/cosmos/relayer/v2/cmd"
 	"github.com/cosmos/relayer/v2/internal/relayertest"
 	"github.com/cosmos/relayer/v2/relayer"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos"
 	"github.com/cosmos/relayer/v2/relayer/provider"
-	interchaintestcosmos "github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	"github.com/strangelove-ventures/interchaintest/v8/relayer/rly"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 )
@@ -33,6 +33,8 @@ type Relayer struct {
 	errCh  chan error
 	cancel context.CancelFunc
 }
+
+var _ ibc.Relayer = (*Relayer)(nil)
 
 // NewRelayer returns a relayer interface
 func NewRelayer(
@@ -73,10 +75,11 @@ func (r *Relayer) AddChainConfiguration(_ context.Context, _ ibc.RelayerExecRepo
 			ChainID: chainConfig.ChainID,
 			RPCAddr: rpcAddr,
 			// GRPCAddr: grpcAddr, // Not part of relayer cosmos provider config (yet)
-			AccountPrefix:  chainConfig.Bech32Prefix,
-			KeyringBackend: keyring.BackendTest,
-			GasAdjustment:  chainConfig.GasAdjustment,
-			GasPrices:      chainConfig.GasPrices,
+			AccountPrefix:    chainConfig.Bech32Prefix,
+			KeyringBackend:   keyring.BackendTest,
+			SigningAlgorithm: chainConfig.SigningAlgorithm,
+			GasAdjustment:    chainConfig.GasAdjustment,
+			GasPrices:        chainConfig.GasPrices,
 			// MinGasAmount: chainConfig.MinGasAmount, // TODO
 			Debug:        true,
 			Timeout:      "10s",
@@ -89,8 +92,8 @@ func (r *Relayer) AddChainConfiguration(_ context.Context, _ ibc.RelayerExecRepo
 	return nil
 }
 
-func (r *Relayer) AddKey(ctx context.Context, _ ibc.RelayerExecReporter, chainID, keyName, coinType string) (ibc.Wallet, error) {
-	res := r.Sys().RunC(ctx, r.log(), "keys", "add", chainID, keyName, "--coin-type", coinType)
+func (r *Relayer) AddKey(ctx context.Context, _ ibc.RelayerExecReporter, chainID, keyName, coinType, signingAlgorithm string) (ibc.Wallet, error) {
+	res := r.Sys().RunC(ctx, r.log(), addKeyArgs(chainID, keyName, coinType, signingAlgorithm)...)
 	if res.Err != nil {
 		return nil, res.Err
 	}
@@ -103,12 +106,28 @@ func (r *Relayer) AddKey(ctx context.Context, _ ibc.RelayerExecReporter, chainID
 	return w, nil
 }
 
+func addKeyArgs(chainID, keyName, coinType, signingAlgorithm string) []string {
+	args := []string{"keys", "add", chainID, keyName, "--coin-type", coinType}
+	if signingAlgorithm != "" {
+		args = append(args, "--signing-algorithm", signingAlgorithm)
+	}
+	return args
+}
+
 func (r *Relayer) RestoreKey(ctx context.Context, _ ibc.RelayerExecReporter, cfg ibc.ChainConfig, keyName, mnemonic string) error {
-	res := r.Sys().RunC(ctx, r.log(), "keys", "restore", cfg.ChainID, keyName, mnemonic, "--coin-type", cfg.CoinType)
+	res := r.Sys().RunC(ctx, r.log(), restoreKeyArgs(cfg, keyName, mnemonic)...)
 	if res.Err != nil {
 		return res.Err
 	}
 	return nil
+}
+
+func restoreKeyArgs(cfg ibc.ChainConfig, keyName, mnemonic string) []string {
+	args := []string{"keys", "restore", cfg.ChainID, keyName, mnemonic, "--coin-type", cfg.CoinType}
+	if cfg.SigningAlgorithm != "" {
+		args = append(args, "--signing-algorithm", cfg.SigningAlgorithm)
+	}
+	return args
 }
 
 func (r *Relayer) GeneratePath(ctx context.Context, _ ibc.RelayerExecReporter, srcChainID, dstChainID, pathName string) error {
@@ -119,15 +138,38 @@ func (r *Relayer) GeneratePath(ctx context.Context, _ ibc.RelayerExecReporter, s
 	return nil
 }
 
-func (r *Relayer) UpdatePath(ctx context.Context, _ ibc.RelayerExecReporter, pathName string, filter ibc.ChannelFilter) error {
-	res := r.Sys().RunC(ctx, r.log(), "paths", "update", pathName,
-		"--filter-rule", filter.Rule,
-		"--filter-channels", strings.Join(filter.ChannelList, ","),
-	)
+func (r *Relayer) UpdatePath(ctx context.Context, _ ibc.RelayerExecReporter, pathName string, opts ibc.PathUpdateOptions) error {
+	res := r.Sys().RunC(ctx, r.log(), pathUpdateArgs(pathName, opts)...)
 	if res.Err != nil {
 		return res.Err
 	}
 	return nil
+}
+
+func pathUpdateArgs(pathName string, opts ibc.PathUpdateOptions) []string {
+	args := []string{"paths", "update", pathName}
+	if opts.ChannelFilter != nil {
+		args = append(args, "--filter-rule", opts.ChannelFilter.Rule, "--filter-channels", strings.Join(opts.ChannelFilter.ChannelList, ","))
+	}
+	if opts.SrcChainID != nil {
+		args = append(args, "--src-chain-id", *opts.SrcChainID)
+	}
+	if opts.DstChainID != nil {
+		args = append(args, "--dst-chain-id", *opts.DstChainID)
+	}
+	if opts.SrcClientID != nil {
+		args = append(args, "--src-client-id", *opts.SrcClientID)
+	}
+	if opts.DstClientID != nil {
+		args = append(args, "--dst-client-id", *opts.DstClientID)
+	}
+	if opts.SrcConnID != nil {
+		args = append(args, "--src-connection-id", *opts.SrcConnID)
+	}
+	if opts.DstConnID != nil {
+		args = append(args, "--dst-connection-id", *opts.DstConnID)
+	}
+	return args
 }
 
 func (r *Relayer) GetChannels(ctx context.Context, _ ibc.RelayerExecReporter, chainID string) ([]ibc.ChannelOutput, error) {
@@ -173,17 +215,21 @@ func (r *Relayer) GetClients(ctx context.Context, _ ibc.RelayerExecReporter, cha
 }
 
 func (r *Relayer) LinkPath(ctx context.Context, _ ibc.RelayerExecReporter, pathName string, chanOpts ibc.CreateChannelOptions, clientOpts ibc.CreateClientOptions) error {
-	res := r.Sys().RunC(ctx, r.log(), "tx", "link", pathName,
-		"--src-port", chanOpts.SourcePortName,
-		"--dst-port", chanOpts.DestPortName,
-		"--order", chanOpts.Order.String(),
-		"--version", chanOpts.Version,
-		"--client-tp", clientOpts.TrustingPeriod,
-	)
+	res := r.Sys().RunC(ctx, r.log(), linkPathArgs(pathName, chanOpts, clientOpts)...)
 	if res.Err != nil {
 		return res.Err
 	}
 	return nil
+}
+
+func linkPathArgs(pathName string, channelOpts ibc.CreateChannelOptions, clientOpts ibc.CreateClientOptions) []string {
+	args := []string{"tx", "link", pathName,
+		"--src-port", channelOpts.SourcePortName,
+		"--dst-port", channelOpts.DestPortName,
+		"--order", channelOpts.Order.String(),
+		"--version", channelOpts.Version,
+	}
+	return createClientArgs(args, clientOpts)
 }
 
 func (r *Relayer) GetConnections(ctx context.Context, _ ibc.RelayerExecReporter, chainID string) (ibc.ConnectionOutputs, error) {
@@ -238,11 +284,37 @@ func (r *Relayer) CreateConnections(ctx context.Context, _ ibc.RelayerExecReport
 }
 
 func (r *Relayer) CreateClients(ctx context.Context, _ ibc.RelayerExecReporter, pathName string, clientOpts ibc.CreateClientOptions) error {
-	res := r.Sys().RunC(ctx, r.log(), "tx", "clients", pathName, "--client-tp", clientOpts.TrustingPeriod)
+	res := r.Sys().RunC(ctx, r.log(), createClientArgs([]string{"tx", "clients", pathName}, clientOpts)...)
 	if res.Err != nil {
 		return res.Err
 	}
 	return nil
+}
+
+func (r *Relayer) CreateClient(ctx context.Context, _ ibc.RelayerExecReporter, srcChainID, dstChainID, pathName string, clientOpts ibc.CreateClientOptions) error {
+	base := []string{"tx", "client", srcChainID, dstChainID, pathName}
+	res := r.Sys().RunC(ctx, r.log(), createClientArgs(base, clientOpts)...)
+	if res.Err != nil {
+		return res.Err
+	}
+	return nil
+}
+
+func createClientArgs(base []string, opts ibc.CreateClientOptions) []string {
+	args := append([]string(nil), base...)
+	if opts.TrustingPeriod != "" {
+		args = append(args, "--client-tp", opts.TrustingPeriod)
+	}
+	if opts.TrustingPeriodPercentage != 0 {
+		args = append(args, "--client-tp-percentage", strconv.FormatInt(opts.TrustingPeriodPercentage, 10))
+	}
+	if opts.MaxClockDrift != "" {
+		args = append(args, "--max-clock-drift", opts.MaxClockDrift)
+	}
+	if opts.Override {
+		args = append(args, "--override")
+	}
+	return args
 }
 
 func (r *Relayer) UpdateClients(ctx context.Context, _ ibc.RelayerExecReporter, pathName string) error {
@@ -301,6 +373,8 @@ func (r *Relayer) start(ctx context.Context, remainingArgs ...string) {
 
 func (r *Relayer) UseDockerNetwork() bool { return false }
 
+func (r *Relayer) ContainerImage() ibc.DockerImage { return ibc.DockerImage{} }
+
 func (r *Relayer) Exec(ctx context.Context, _ ibc.RelayerExecReporter, cmd, _ []string) ibc.RelayerExecResult {
 	// TODO: env would be ignored for now.
 	// We may want to modify the call to sys() to accept environment overrides,
@@ -356,17 +430,14 @@ func (r *Relayer) GetWallet(chainID string) (ibc.Wallet, bool) {
 
 // SetClientContractHash sets the wasm client contract hash in the chain's config if the counterparty chain in a path used 08-wasm
 // to instantiate the client.
-func (r *Relayer) SetClientContractHash(ctx context.Context, rep ibc.RelayerExecReporter, cfg ibc.ChainConfig, hash string) error {
-	//TODO implement me
-	panic("implement me")
+func (r *Relayer) SetClientContractHash(_ context.Context, _ ibc.RelayerExecReporter, _ ibc.ChainConfig, _ string) error {
+	return errors.New("in-process relayer does not support wasm client contract hashes")
 }
 
-func (r *Relayer) PauseRelayer(ctx context.Context) error {
-	//TODO implement me
-	panic("implement me")
+func (r *Relayer) PauseRelayer(_ context.Context) error {
+	return errors.New("in-process relayer does not support pause")
 }
 
-func (r *Relayer) ResumeRelayer(ctx context.Context) error {
-	//TODO implement me
-	panic("implement me")
+func (r *Relayer) ResumeRelayer(_ context.Context) error {
+	return errors.New("in-process relayer does not support resume")
 }

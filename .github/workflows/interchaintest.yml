@@ -4,18 +4,33 @@ on:
   pull_request:
 
 jobs:
-  events:
+  module-contract:
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: checkout relayer
         uses: actions/checkout@v4
 
-      - uses: actions/cache@v3
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - name: Verify isolated interchaintest module
+        run: make interchaintest-contract
+
+  events:
+    needs: module-contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout relayer
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -28,17 +43,18 @@ jobs:
         run: make interchaintest-events
 
   legacy:
+    needs: module-contract
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: checkout relayer
         uses: actions/checkout@v4
 
-      - uses: actions/cache@v3
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -51,17 +67,18 @@ jobs:
         run: make interchaintest-legacy
 
   multiple-paths:
+    needs: module-contract
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: checkout relayer
         uses: actions/checkout@v4
 
-      - uses: actions/cache@v3
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -74,17 +91,18 @@ jobs:
         run: make interchaintest-multiple
 
   misbehaviour:
+    needs: module-contract
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: checkout relayer
         uses: actions/checkout@v4
 
-      - uses: actions/cache@v3
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -97,17 +115,18 @@ jobs:
         run: make interchaintest-misbehaviour
 
   fee-middleware:
+    needs: module-contract
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: checkout relayer
         uses: actions/checkout@v4
 
-      - uses: actions/cache@v3
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -120,17 +139,18 @@ jobs:
         run: make interchaintest-fee-middleware
 
   fee-grant:
+    needs: module-contract
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: checkout relayer
         uses: actions/checkout@v4
 
-      - uses: actions/cache@v3
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -142,29 +162,62 @@ jobs:
       - name: interchaintest
         run: make interchaintest-fee-grant
 
+  docker-events:
+    needs: module-contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout relayer
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - name: Docker event-processor conformance
+        run: make interchaintest-docker-events
+
+  docker-legacy:
+    needs: module-contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout relayer
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - name: Docker legacy-processor conformance
+        run: make interchaintest-docker-legacy
+
   prepare-scenario-matrix:
+    needs: module-contract
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
 
       - name: Generate matrix
         id: set-matrix
         run: |
+          set -euo pipefail
           # Run the command and convert its output to a JSON array
           TESTS=$(cd interchaintest && go test -list ^TestScenario ./... | grep -v "^ok " | grep -v "proto: duplicate proto type registered" | jq -R -s -c 'split("\n")[:-1]')
+          test "$TESTS" != "[]"
           echo "matrix=${TESTS}" >> $GITHUB_OUTPUT
   
   # Note : This job will not start until prepare-scenario-matrix completes sucessfully
   scenarios:
-    needs: prepare-scenario-matrix
+    needs: [module-contract, prepare-scenario-matrix]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -172,15 +225,15 @@ jobs:
         test: ${{fromJson(needs.prepare-scenario-matrix.outputs.matrix)}}
 
     steps:
-      - name: Set up Go 1.21
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-
       - name: checkout relayer
         uses: actions/checkout@v4
 
-      - uses: actions/cache@v3
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: '.go-version'
+
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -190,7 +243,8 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: interchaintest
+        env:
+          TEST_NAME: ${{ matrix.test }}
         run: |
           cd interchaintest
-          go test -timeout 30m -race -v -run ${{ matrix.test }}
-
+          go test -timeout 30m -race -v -run "^${TEST_NAME}$" ./...

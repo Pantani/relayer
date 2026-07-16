@@ -1,21 +1,19 @@
 package cosmos
 
 import (
-	feegrant "cosmossdk.io/x/feegrant/module"
-	"cosmossdk.io/x/tx/signing"
-	"cosmossdk.io/x/upgrade"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/contrib/x/crisis"
 	"github.com/cosmos/cosmos-sdk/std"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	"github.com/cosmos/cosmos-sdk/x/auth"
 	"github.com/cosmos/cosmos-sdk/x/auth/tx"
 	authz "github.com/cosmos/cosmos-sdk/x/authz/module"
 	"github.com/cosmos/cosmos-sdk/x/bank"
-	"github.com/cosmos/cosmos-sdk/x/crisis"
 	"github.com/cosmos/cosmos-sdk/x/distribution"
+	feegrant "github.com/cosmos/cosmos-sdk/x/feegrant/module"
 	"github.com/cosmos/cosmos-sdk/x/gov"
 	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
 	"github.com/cosmos/cosmos-sdk/x/mint"
@@ -23,15 +21,17 @@ import (
 	paramsclient "github.com/cosmos/cosmos-sdk/x/params/client"
 	"github.com/cosmos/cosmos-sdk/x/slashing"
 	"github.com/cosmos/cosmos-sdk/x/staking"
+	"github.com/cosmos/cosmos-sdk/x/tx/signing"
+	"github.com/cosmos/cosmos-sdk/x/upgrade"
 	"github.com/cosmos/gogoproto/proto"
-	"github.com/cosmos/ibc-go/modules/capability"
-	ibcfee "github.com/cosmos/ibc-go/v8/modules/apps/29-fee"
-	"github.com/cosmos/ibc-go/v8/modules/apps/transfer"
-	ibc "github.com/cosmos/ibc-go/v8/modules/core"
+	"github.com/cosmos/ibc-go/v11/modules/apps/transfer"
+	ibc "github.com/cosmos/ibc-go/v11/modules/core"
 
+	"github.com/cosmos/relayer/v2/relayer/chains/cosmos/keys/sr25519"
 	cosmosmodule "github.com/cosmos/relayer/v2/relayer/chains/cosmos/module"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos/stride"
 	ethermintcodecs "github.com/cosmos/relayer/v2/relayer/codecs/ethermint"
+	ics29codecs "github.com/cosmos/relayer/v2/relayer/codecs/ics29"
 	injectivecodecs "github.com/cosmos/relayer/v2/relayer/codecs/injective"
 )
 
@@ -39,7 +39,6 @@ var ModuleBasics = []module.AppModuleBasic{
 	auth.AppModuleBasic{},
 	authz.AppModuleBasic{},
 	bank.AppModuleBasic{},
-	capability.AppModuleBasic{},
 	// TODO: add osmosis governance proposal types here
 	// TODO: add other proposal types here
 	gov.NewAppModuleBasic(
@@ -59,7 +58,6 @@ var ModuleBasics = []module.AppModuleBasic{
 	ibc.AppModuleBasic{},
 	cosmosmodule.AppModuleBasic{},
 	stride.AppModuleBasic{},
-	ibcfee.AppModuleBasic{},
 }
 
 type Codec struct {
@@ -76,6 +74,10 @@ func MakeCodec(moduleBasics []module.AppModuleBasic, extraCodecs []string, accBe
 	std.RegisterInterfaces(encodingConfig.InterfaceRegistry)
 	modBasic.RegisterLegacyAminoCodec(encodingConfig.Amino)
 	modBasic.RegisterInterfaces(encodingConfig.InterfaceRegistry)
+	ics29codecs.RegisterLegacyAminoCodec(encodingConfig.Amino)
+	ics29codecs.RegisterInterfaces(encodingConfig.InterfaceRegistry)
+	sr25519.RegisterLegacyAminoCodec(encodingConfig.Amino)
+	sr25519.RegisterInterfaces(encodingConfig.InterfaceRegistry)
 	for _, c := range extraCodecs {
 		switch c {
 		case "ethermint":

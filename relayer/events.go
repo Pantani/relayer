@@ -2,54 +2,62 @@ package relayer
 
 import (
 	"errors"
+	"slices"
 
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	connectiontypes "github.com/cosmos/ibc-go/v8/modules/core/03-connection/types"
-	channeltypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	connectiontypes "github.com/cosmos/ibc-go/v11/modules/core/03-connection/types"
+	channeltypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
 	"github.com/cosmos/relayer/v2/relayer/provider"
 )
 
 // ParseClientIDFromEvents parses events emitted from a MsgCreateClient and returns the
 // client identifier.
 func ParseClientIDFromEvents(events []provider.RelayerEvent) (string, error) {
-	for _, event := range events {
-		if event.EventType == clienttypes.EventTypeCreateClient {
-			for attributeKey, attributeValue := range event.Attributes {
-				if attributeKey == clienttypes.AttributeKeyClientID {
-					return attributeValue, nil
-				}
-			}
-		}
-	}
-	return "", errors.New("client identifier event attribute not found")
+	return parseIdentifierFromEvents(
+		events,
+		clienttypes.AttributeKeyClientID,
+		"client identifier event attribute not found",
+		clienttypes.EventTypeCreateClient,
+	)
 }
 
 // ParseConnectionIDFromEvents parses events emitted from a MsgConnectionOpenInit or
 // MsgConnectionOpenTry and returns the connection identifier.
 func ParseConnectionIDFromEvents(events []provider.RelayerEvent) (string, error) {
-	for _, event := range events {
-		if event.EventType == connectiontypes.EventTypeConnectionOpenInit || event.EventType == connectiontypes.EventTypeConnectionOpenTry {
-			for attributeKey, attributeValue := range event.Attributes {
-				if attributeKey == connectiontypes.AttributeKeyConnectionID {
-					return attributeValue, nil
-				}
-			}
-		}
-	}
-	return "", errors.New("connection identifier event attribute not found")
+	return parseIdentifierFromEvents(
+		events,
+		connectiontypes.AttributeKeyConnectionID,
+		"connection identifier event attribute not found",
+		connectiontypes.EventTypeConnectionOpenInit,
+		connectiontypes.EventTypeConnectionOpenTry,
+	)
 }
 
 // ParseChannelIDFromEvents parses events emitted from a MsgChannelOpenInit or
 // MsgChannelOpenTry and returns the channel identifier.
 func ParseChannelIDFromEvents(events []provider.RelayerEvent) (string, error) {
+	return parseIdentifierFromEvents(
+		events,
+		channeltypes.AttributeKeyChannelID,
+		"channel identifier event attribute not found",
+		channeltypes.EventTypeChannelOpenInit,
+		channeltypes.EventTypeChannelOpenTry,
+	)
+}
+
+func parseIdentifierFromEvents(
+	events []provider.RelayerEvent,
+	attributeKey,
+	errorMessage string,
+	eventTypes ...string,
+) (string, error) {
 	for _, event := range events {
-		if event.EventType == channeltypes.EventTypeChannelOpenInit || event.EventType == channeltypes.EventTypeChannelOpenTry {
-			for attributeKey, attributeValue := range event.Attributes {
-				if attributeKey == channeltypes.AttributeKeyChannelID {
-					return attributeValue, nil
-				}
-			}
+		if !slices.Contains(eventTypes, event.EventType) {
+			continue
+		}
+		if identifier, ok := event.Attributes[attributeKey]; ok {
+			return identifier, nil
 		}
 	}
-	return "", errors.New("channel identifier event attribute not found")
+	return "", errors.New(errorMessage)
 }

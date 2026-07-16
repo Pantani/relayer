@@ -6,9 +6,9 @@ import (
 	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
 	"github.com/cosmos/relayer/v2/relayer/provider"
 	"go.uber.org/zap"
 )
@@ -26,84 +26,33 @@ func (c *Chain) SendTransferMsg(
 	toTimeOffset time.Duration,
 	srcChannel *chantypes.IdentifiedChannel,
 ) error {
-	var (
-		timeoutHeight    uint64
-		timeoutTimestamp uint64
-	)
+	if err := validateTransferTimeoutOffset(toTimeOffset); err != nil {
+		return err
+	}
 
 	// get header representing dst to check timeouts
 	srch, dsth, err := QueryLatestHeights(ctx, c, dst)
 	if err != nil {
 		return err
 	}
-	h, err := c.ChainProvider.QueryClientState(ctx, srch, c.PathEnd.ClientID)
+	clientLatestHeight, err := transferClientLatestHeight(ctx, c, srch)
 	if err != nil {
 		return err
 	}
 
-	// if the timestamp offset is set we need to query the dst chains consensus state to get the current time
-	var consensusState ibcexported.ConsensusState
-	if toTimeOffset > 0 {
-		clientStateRes, err := dst.ChainProvider.QueryClientStateResponse(ctx, dsth, dst.ClientID())
-		if err != nil {
-			return fmt.Errorf("failed to query the client state response: %w", err)
-		}
-
-		clientState, err := clienttypes.UnpackClientState(clientStateRes.ClientState)
-		if err != nil {
-			return fmt.Errorf("failed to unpack client state: %w", err)
-		}
-
-		consensusStateRes, err := dst.ChainProvider.QueryClientConsensusState(
-			ctx,
-			dsth,
-			dst.ClientID(),
-			clientState.GetLatestHeight(),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to query client consensus state: %w", err)
-		}
-
-		consensusState, err = clienttypes.UnpackConsensusState(consensusStateRes.ConsensusState)
-		if err != nil {
-			return fmt.Errorf("failed to unpack consensus state: %w", err)
-		}
-
-		// use local clock time as reference time if it is later than the
-		// consensus state timestamp of the counterparty chain, otherwise
-		// still use consensus state timestamp as reference.
-		// see https://github.com/cosmos/ibc-go/blob/ccc4cb804843f1a80acfb0d4dbf106d1ff2178bb/modules/apps/transfer/client/cli/tx.go#L94-L110
-		tmpNow := time.Now().UnixNano()
-		consensusTimestamp := consensusState.GetTimestamp()
-		now := uint64(tmpNow)
-		if now > consensusTimestamp {
-			timeoutTimestamp = now + uint64(toTimeOffset)
-		} else {
-			timeoutTimestamp = consensusTimestamp + uint64(toTimeOffset)
-		}
+	timeoutTimestamp, err := transferTimeoutTimestamp(ctx, dst, dsth, toTimeOffset)
+	if err != nil {
+		return err
 	}
 
-	clientHeight := h.GetLatestHeight().GetRevisionHeight()
-
-	switch {
-	case toHeightOffset > 0 && toTimeOffset > 0:
-		timeoutHeight = clientHeight + toHeightOffset
-	case toHeightOffset > 0:
-		timeoutHeight = clientHeight + toHeightOffset
-		timeoutTimestamp = 0
-	case toTimeOffset > 0:
-		timeoutHeight = 0
-	case toHeightOffset == 0 && toTimeOffset == 0:
-		timeoutHeight = clientHeight + defaultTimeoutOffset
-		timeoutTimestamp = 0
-	}
+	timeoutHeight := transferTimeoutHeight(clientLatestHeight.GetRevisionHeight(), toHeightOffset, toTimeOffset)
 
 	// MsgTransfer will call SendPacket on src chain
 	pi := provider.PacketInfo{
 		SourceChannel: srcChannel.ChannelId,
 		SourcePort:    srcChannel.PortId,
 		TimeoutHeight: clienttypes.Height{
-			RevisionNumber: h.GetLatestHeight().GetRevisionNumber(),
+			RevisionNumber: clientLatestHeight.GetRevisionNumber(),
 			RevisionHeight: timeoutHeight,
 		},
 		TimeoutTimestamp: timeoutTimestamp,
@@ -119,24 +68,104 @@ func (c *Chain) SendTransferMsg(
 	}
 
 	result := txs.Send(ctx, log, AsRelayMsgSender(c), AsRelayMsgSender(dst), memo)
+	return logTransferResult(c, dst, result)
+}
+
+func validateTransferTimeoutOffset(offset time.Duration) error {
+	if offset < 0 {
+		return fmt.Errorf("transfer timeout time offset cannot be negative: %s", offset)
+	}
+	return nil
+}
+
+func transferTimeoutTimestamp(ctx context.Context, dst *Chain, queryHeight int64, offset time.Duration) (uint64, error) {
+	if offset <= 0 {
+		return 0, nil
+	}
+	referenceTimestamp, err := transferReferenceTimestamp(ctx, dst, queryHeight)
+	if err != nil {
+		return 0, err
+	}
+	return max(uint64(time.Now().UnixNano()), referenceTimestamp) + uint64(offset), nil
+}
+
+func transferTimeoutHeight(clientHeight, heightOffset uint64, timeOffset time.Duration) uint64 {
+	if heightOffset > 0 {
+		return clientHeight + heightOffset
+	}
+	if timeOffset > 0 {
+		return 0
+	}
+	return clientHeight + defaultTimeoutOffset
+}
+
+func logTransferResult(src, dst *Chain, result SendMsgsResult) error {
 	if err := result.Error(); err != nil {
 		if result.PartiallySent() {
-			c.log.Info(
+			src.log.Info(
 				"Partial success when sending transfer",
-				zap.String("src_chain_id", c.ChainID()),
+				zap.String("src_chain_id", src.ChainID()),
 				zap.String("dst_chain_id", dst.ChainID()),
 				zap.Object("send_result", result),
 			)
 		}
 		return err
-	} else if result.SuccessfullySent() {
-		c.log.Info(
+	}
+	if result.SuccessfullySent() {
+		src.log.Info(
 			"Successfully sent a transfer",
-			zap.String("src_chain_id", c.ChainID()),
+			zap.String("src_chain_id", src.ChainID()),
 			zap.String("dst_chain_id", dst.ChainID()),
 			zap.Object("send_result", result),
 		)
 	}
 
 	return nil
+}
+
+func transferClientLatestHeight(ctx context.Context, chain *Chain, queryHeight int64) (clienttypes.Height, error) {
+	if chain.ClientID() == ibcexported.LocalhostClientID {
+		if queryHeight < 0 {
+			return clienttypes.Height{}, fmt.Errorf("localhost query height cannot be negative: %d", queryHeight)
+		}
+		return clienttypes.NewHeight(clienttypes.ParseChainID(chain.ChainID()), uint64(queryHeight)), nil
+	}
+
+	state, err := chain.ChainProvider.QueryClientState(ctx, queryHeight, chain.ClientID())
+	if err != nil {
+		return clienttypes.Height{}, err
+	}
+	return provider.ClientStateLatestHeight(state)
+}
+
+func transferReferenceTimestamp(ctx context.Context, chain *Chain, queryHeight int64) (uint64, error) {
+	if chain.ClientID() == ibcexported.LocalhostClientID {
+		blockTime, err := chain.ChainProvider.BlockTime(ctx, queryHeight)
+		if err != nil {
+			return 0, fmt.Errorf("failed to query localhost block time: %w", err)
+		}
+		return uint64(blockTime.UnixNano()), nil
+	}
+
+	stateResponse, err := chain.ChainProvider.QueryClientStateResponse(ctx, queryHeight, chain.ClientID())
+	if err != nil {
+		return 0, fmt.Errorf("failed to query the client state response: %w", err)
+	}
+	state, err := clienttypes.UnpackClientState(stateResponse.ClientState)
+	if err != nil {
+		return 0, fmt.Errorf("failed to unpack client state: %w", err)
+	}
+	stateHeight, err := provider.ClientStateLatestHeight(state)
+	if err != nil {
+		return 0, fmt.Errorf("failed to extract client state height: %w", err)
+	}
+	consensusResponse, err := chain.ChainProvider.QueryClientConsensusState(ctx, queryHeight, chain.ClientID(), stateHeight)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query client consensus state: %w", err)
+	}
+	consensusState, err := clienttypes.UnpackConsensusState(consensusResponse.ConsensusState)
+	if err != nil {
+		return 0, fmt.Errorf("failed to unpack consensus state: %w", err)
+	}
+	return consensusState.GetTimestamp(), nil
 }

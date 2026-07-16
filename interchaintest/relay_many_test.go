@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	sdkmath "cosmossdk.io/math"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	relayerinterchaintest "github.com/cosmos/relayer/v2/interchaintest"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 	"golang.org/x/sync/errgroup"
@@ -38,6 +38,7 @@ func TestRelayerMultiplePathsSingleProcess(t *testing.T) {
 			Version:       "v14.1.0",
 			NumValidators: &nv,
 			NumFullNodes:  &nf,
+			ChainConfig:   gaiaChainConfig("v14.1.0", ibc.ChainConfig{}),
 		},
 		{
 			Name:          "osmosis",
@@ -103,14 +104,7 @@ func TestRelayerMultiplePathsSingleProcess(t *testing.T) {
 	err = r.StartRelayer(ctx, eRep, pathGaiaOsmosis, pathGaiaJuno)
 	require.NoError(t, err)
 
-	t.Cleanup(
-		func() {
-			err := r.StopRelayer(ctx, eRep)
-			if err != nil {
-				t.Logf("an error occurred while stopping the relayer: %s", err)
-			}
-		},
-	)
+	t.Cleanup(func() { stopRelayerForTest(t, ctx, r, eRep) })
 
 	// Fund user accounts, so we can query balances and make assertions.
 	initBal := sdkmath.NewInt(10_000_000)
@@ -137,8 +131,8 @@ func TestRelayerMultiplePathsSingleProcess(t *testing.T) {
 	junoChans, err := r.GetChannels(ctx, eRep, junoCfg.ChainID)
 	require.NoError(t, err)
 
-	osmosisIBCDenom := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(osmosisChans[0].Counterparty.PortID, osmosisChans[0].Counterparty.ChannelID, osmosisCfg.Denom)).IBCDenom()
-	junoIBCDenom := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(junoChans[0].Counterparty.PortID, junoChans[0].Counterparty.ChannelID, junoCfg.Denom)).IBCDenom()
+	osmosisIBCDenom := transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(osmosisChans[0].Counterparty.PortID, osmosisChans[0].Counterparty.ChannelID, osmosisCfg.Denom)).IBCDenom()
+	junoIBCDenom := transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(junoChans[0].Counterparty.PortID, junoChans[0].Counterparty.ChannelID, junoCfg.Denom)).IBCDenom()
 
 	var eg errgroup.Group
 

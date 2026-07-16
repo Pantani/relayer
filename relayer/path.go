@@ -2,12 +2,14 @@ package relayer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	conntypes "github.com/cosmos/ibc-go/v8/modules/core/03-connection/types"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	conntypes "github.com/cosmos/ibc-go/v11/modules/core/03-connection/types"
 	"github.com/cosmos/relayer/v2/relayer/processor"
+	"github.com/cosmos/relayer/v2/relayer/protocol"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +19,10 @@ const (
 	xIcon   = "✘"
 	Expired = "EXPIRED"
 )
+
+// ErrV2RuntimeNotImplemented marks paths that are structurally valid for IBC
+// v2 but cannot yet be handled by the Classic relayer runtime.
+var ErrV2RuntimeNotImplemented = errors.New("IBC v2 runtime is not implemented")
 
 // Paths represent connection paths between chains
 type Paths map[string]*Path
@@ -91,9 +97,10 @@ type PathAction struct {
 // Path represents a pair of chains and the identifiers needed to relay over them along with a channel filter list.
 // A Memo can optionally be provided for identification in relayed messages.
 type Path struct {
-	Src    *PathEnd      `yaml:"src" json:"src"`
-	Dst    *PathEnd      `yaml:"dst" json:"dst"`
-	Filter ChannelFilter `yaml:"src-channel-filter" json:"src-channel-filter"`
+	Protocol protocol.Protocol `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+	Src      *PathEnd          `yaml:"src" json:"src"`
+	Dst      *PathEnd          `yaml:"dst" json:"dst"`
+	Filter   ChannelFilter     `yaml:"src-channel-filter" json:"src-channel-filter"`
 }
 
 // Named path wraps a Path with its name.
@@ -107,6 +114,107 @@ type NamedPath struct {
 type ChannelFilter struct {
 	Rule        string   `yaml:"rule" json:"rule"`
 	ChannelList []string `yaml:"channel-list" json:"channel-list"`
+}
+
+// EffectiveProtocol preserves legacy path configuration by treating an absent
+// protocol field as IBC Classic without mutating the serialized value.
+func (p *Path) EffectiveProtocol() protocol.Protocol {
+	if p == nil || p.Protocol == protocol.ProtocolUnspecified {
+		return protocol.ProtocolClassic
+	}
+	return p.Protocol
+}
+
+// EnsureClassicRuntime prevents a v2 path from entering the existing Classic
+// connection/channel runtime before the v2 runtime is implemented.
+func (p *Path) EnsureClassicRuntime() error {
+	if p == nil {
+		return errors.New("path is nil")
+	}
+	if err := p.EffectiveProtocol().Validate(); err != nil {
+		return err
+	}
+	if p.EffectiveProtocol() != protocol.ProtocolClassic {
+		return fmt.Errorf("path protocol %q: %w", p.EffectiveProtocol(), ErrV2RuntimeNotImplemented)
+	}
+	return nil
+}
+
+// Validate checks path configuration without making network requests.
+func (p *Path) Validate() error {
+	if err := p.validateShape(); err != nil {
+		return err
+	}
+	if err := p.EffectiveProtocol().Validate(); err != nil {
+		return err
+	}
+	if p.EffectiveProtocol() == protocol.ProtocolV2 {
+		return p.validateV2()
+	}
+	return p.validateClassic()
+}
+
+func (p *Path) validateShape() error {
+	if p == nil {
+		return errors.New("path is nil")
+	}
+	if p.Src == nil {
+		return errors.New("path source is nil")
+	}
+	if p.Dst == nil {
+		return errors.New("path destination is nil")
+	}
+	return nil
+}
+
+func (p *Path) validateClassic() error {
+	if err := p.ValidateChannelFilterRule(); err != nil {
+		return err
+	}
+	if len(p.Src.MerklePrefix) != 0 {
+		return errors.New("path protocol classic cannot set source merkle-prefix")
+	}
+	if len(p.Dst.MerklePrefix) != 0 {
+		return errors.New("path protocol classic cannot set destination merkle-prefix")
+	}
+	return nil
+}
+
+func (p *Path) validateV2() error {
+	if p.Src.ConnectionID != "" {
+		return errors.New("path protocol v2 cannot set source connection-id")
+	}
+	if p.Dst.ConnectionID != "" {
+		return errors.New("path protocol v2 cannot set destination connection-id")
+	}
+	if !p.Filter.Empty() {
+		return errors.New("path protocol v2 cannot set src-channel-filter")
+	}
+	if err := validateV2PathEnd("source", p.Src); err != nil {
+		return err
+	}
+	return validateV2PathEnd("destination", p.Dst)
+}
+
+func validateV2PathEnd(direction string, pe *PathEnd) error {
+	if pe.ChainID == "" {
+		return fmt.Errorf("path protocol v2 requires %s chain-id", direction)
+	}
+	if pe.ClientID == "" {
+		return fmt.Errorf("path protocol v2 requires %s client-id", direction)
+	}
+	if len(pe.MerklePrefix) == 0 {
+		return fmt.Errorf("path protocol v2 requires %s merkle-prefix", direction)
+	}
+	if err := pe.MerklePrefix.Validate(); err != nil {
+		return fmt.Errorf("%s merkle-prefix: %w", direction, err)
+	}
+	return nil
+}
+
+// Empty reports whether no Classic channel filtering is configured.
+func (cf ChannelFilter) Empty() bool {
+	return cf.Rule == "" && len(cf.ChannelList) == 0
 }
 
 type IBCdata struct {
@@ -172,7 +280,17 @@ func (p *Path) End(chainID string) *PathEnd {
 }
 
 func (p *Path) String() string {
-	return fmt.Sprintf("%s -> %s", p.Src.String(), p.Dst.String())
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%s -> %s", pathEndString(p.Src), pathEndString(p.Dst))
+}
+
+func pathEndString(pe *PathEnd) string {
+	if pe == nil {
+		return "<nil>"
+	}
+	return pe.String()
 }
 
 // GenPath generates a path with unspecified client, connection and channel identifiers

@@ -166,6 +166,14 @@ type cosmosAnyWrapper struct {
 	Value interface{} `json:"value"`
 }
 
+type traversedField struct {
+	name         string
+	prefix       string
+	typ          reflect.Type
+	value        reflect.Value
+	isCollection bool
+}
+
 func traverseFields(
 	cdc codectypes.AnyUnpacker,
 	typeMap apitypes.Types,
@@ -174,166 +182,198 @@ func traverseFields(
 	t reflect.Type,
 	v reflect.Value,
 ) error {
-	n := t.NumField()
-
-	if prefix == typeDefPrefix {
-		if len(typeMap[rootType]) == n {
-			return nil
-		}
-	} else {
-		typeDef := sanitizeTypedef(prefix)
-		if len(typeMap[typeDef]) == n {
-			return nil
-		}
+	if typeDefinitionComplete(typeMap, rootType, prefix, t.NumField()) {
+		return nil
 	}
 
-	for i := 0; i < n; i++ {
-		var (
-			field reflect.Value
-			err   error
-		)
-
-		if v.IsValid() {
-			field = v.Field(i)
-		}
-
-		fieldType := t.Field(i).Type
-		fieldName := jsonNameFromTag(t.Field(i).Tag)
-
-		if fieldType == cosmosAnyType {
-			// Unpack field, value as Any
-			if fieldType, field, err = unpackAny(cdc, field); err != nil {
-				return err
-			}
-		}
-
-		// If field is an empty value, do not include in types, since it will not be present in the object
-		if field.IsZero() {
-			continue
-		}
-
-		for {
-			if fieldType.Kind() == reflect.Ptr {
-				fieldType = fieldType.Elem()
-
-				if field.IsValid() {
-					field = field.Elem()
-				}
-
-				continue
-			}
-
-			if fieldType.Kind() == reflect.Interface {
-				fieldType = reflect.TypeOf(field.Interface())
-				continue
-			}
-
-			if field.Kind() == reflect.Ptr {
-				field = field.Elem()
-				continue
-			}
-
-			break
-		}
-
-		var isCollection bool
-		if fieldType.Kind() == reflect.Array || fieldType.Kind() == reflect.Slice {
-			if field.Len() == 0 {
-				// skip empty collections from type mapping
-				continue
-			}
-
-			fieldType = fieldType.Elem()
-			field = field.Index(0)
-			isCollection = true
-
-			if fieldType == cosmosAnyType {
-				if fieldType, field, err = unpackAny(cdc, field); err != nil {
-					return err
-				}
-			}
-		}
-
-		for {
-			if fieldType.Kind() == reflect.Ptr {
-				fieldType = fieldType.Elem()
-
-				if field.IsValid() {
-					field = field.Elem()
-				}
-
-				continue
-			}
-
-			if fieldType.Kind() == reflect.Interface {
-				fieldType = reflect.TypeOf(field.Interface())
-				continue
-			}
-
-			if field.Kind() == reflect.Ptr {
-				field = field.Elem()
-				continue
-			}
-
-			break
-		}
-
-		fieldPrefix := fmt.Sprintf("%s.%s", prefix, fieldName)
-
-		ethTyp := typToEth(fieldType)
-		if len(ethTyp) > 0 {
-			// Support array of uint64
-			if isCollection && fieldType.Kind() != reflect.Slice && fieldType.Kind() != reflect.Array {
-				ethTyp += "[]"
-			}
-
-			if prefix == typeDefPrefix {
-				typeMap[rootType] = append(typeMap[rootType], apitypes.Type{
-					Name: fieldName,
-					Type: ethTyp,
-				})
-			} else {
-				typeDef := sanitizeTypedef(prefix)
-				typeMap[typeDef] = append(typeMap[typeDef], apitypes.Type{
-					Name: fieldName,
-					Type: ethTyp,
-				})
-			}
-
-			continue
-		}
-
-		if fieldType.Kind() == reflect.Struct {
-			var fieldTypedef string
-
-			if isCollection {
-				fieldTypedef = sanitizeTypedef(fieldPrefix) + "[]"
-			} else {
-				fieldTypedef = sanitizeTypedef(fieldPrefix)
-			}
-
-			if prefix == typeDefPrefix {
-				typeMap[rootType] = append(typeMap[rootType], apitypes.Type{
-					Name: fieldName,
-					Type: fieldTypedef,
-				})
-			} else {
-				typeDef := sanitizeTypedef(prefix)
-				typeMap[typeDef] = append(typeMap[typeDef], apitypes.Type{
-					Name: fieldName,
-					Type: fieldTypedef,
-				})
-			}
-
-			if err := traverseFields(cdc, typeMap, rootType, fieldPrefix, fieldType, field); err != nil {
-				return err
-			}
-
-			continue
+	for i := 0; i < t.NumField(); i++ {
+		if err := traverseField(cdc, typeMap, rootType, prefix, t.Field(i), valueField(v, i)); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+func typeDefinitionComplete(typeMap apitypes.Types, rootType, prefix string, fields int) bool {
+	return len(typeMap[typeDefinitionName(rootType, prefix)]) == fields
+}
+
+func typeDefinitionName(rootType, prefix string) string {
+	if prefix == typeDefPrefix {
+		return rootType
+	}
+
+	return sanitizeTypedef(prefix)
+}
+
+func valueField(v reflect.Value, index int) reflect.Value {
+	if v.IsValid() {
+		return v.Field(index)
+	}
+
+	return reflect.Value{}
+}
+
+func traverseField(
+	cdc codectypes.AnyUnpacker,
+	typeMap apitypes.Types,
+	rootType string,
+	prefix string,
+	structField reflect.StructField,
+	value reflect.Value,
+) error {
+	field, skip, err := prepareTraversedField(cdc, prefix, structField, value)
+	if err != nil || skip {
+		return err
+	}
+
+	if appendEthereumField(typeMap, rootType, prefix, field) {
+		return nil
+	}
+
+	if field.typ.Kind() != reflect.Struct {
+		return nil
+	}
+
+	appendTypedField(typeMap, rootType, prefix, field.name, structFieldType(field))
+	return traverseFields(cdc, typeMap, rootType, field.prefix, field.typ, field.value)
+}
+
+func prepareTraversedField(
+	cdc codectypes.AnyUnpacker,
+	prefix string,
+	structField reflect.StructField,
+	value reflect.Value,
+) (traversedField, bool, error) {
+	fieldType, fieldValue, err := unpackFieldAny(cdc, structField.Type, value)
+	if err != nil {
+		return traversedField{}, false, err
+	}
+
+	if fieldValue.IsZero() {
+		return traversedField{}, true, nil
+	}
+
+	fieldType, fieldValue = dereferenceField(fieldType, fieldValue)
+	return prepareCollectionField(cdc, prefix, jsonNameFromTag(structField.Tag), fieldType, fieldValue)
+}
+
+func unpackFieldAny(
+	cdc codectypes.AnyUnpacker,
+	fieldType reflect.Type,
+	fieldValue reflect.Value,
+) (reflect.Type, reflect.Value, error) {
+	if fieldType != cosmosAnyType {
+		return fieldType, fieldValue, nil
+	}
+
+	return unpackAny(cdc, fieldValue)
+}
+
+func prepareCollectionField(
+	cdc codectypes.AnyUnpacker,
+	prefix string,
+	name string,
+	fieldType reflect.Type,
+	fieldValue reflect.Value,
+) (traversedField, bool, error) {
+	isCollection := fieldType.Kind() == reflect.Array || fieldType.Kind() == reflect.Slice
+	if isCollection && fieldValue.Len() == 0 {
+		return traversedField{}, true, nil
+	}
+
+	var err error
+	if isCollection {
+		fieldType, fieldValue, err = collectionElement(cdc, fieldType, fieldValue)
+	}
+	if err != nil {
+		return traversedField{}, false, err
+	}
+
+	fieldType, fieldValue = dereferenceField(fieldType, fieldValue)
+	return traversedField{
+		name:         name,
+		prefix:       fmt.Sprintf("%s.%s", prefix, name),
+		typ:          fieldType,
+		value:        fieldValue,
+		isCollection: isCollection,
+	}, false, nil
+}
+
+func collectionElement(
+	cdc codectypes.AnyUnpacker,
+	fieldType reflect.Type,
+	fieldValue reflect.Value,
+) (reflect.Type, reflect.Value, error) {
+	fieldType = fieldType.Elem()
+	fieldValue = fieldValue.Index(0)
+	return unpackFieldAny(cdc, fieldType, fieldValue)
+}
+
+func dereferenceField(fieldType reflect.Type, fieldValue reflect.Value) (reflect.Type, reflect.Value) {
+	for {
+		switch fieldType.Kind() {
+		case reflect.Ptr:
+			fieldType = fieldType.Elem()
+			fieldValue = dereferenceValue(fieldValue)
+			continue
+		case reflect.Interface:
+			fieldType = reflect.TypeOf(fieldValue.Interface())
+			continue
+		}
+
+		if fieldValue.Kind() != reflect.Ptr {
+			return fieldType, fieldValue
+		}
+
+		fieldValue = fieldValue.Elem()
+	}
+}
+
+func dereferenceValue(value reflect.Value) reflect.Value {
+	if value.IsValid() {
+		return value.Elem()
+	}
+
+	return value
+}
+
+func appendEthereumField(typeMap apitypes.Types, rootType, prefix string, field traversedField) bool {
+	ethType := ethereumFieldType(field.typ, field.isCollection)
+	if ethType == "" {
+		return false
+	}
+
+	appendTypedField(typeMap, rootType, prefix, field.name, ethType)
+	return true
+}
+
+func ethereumFieldType(fieldType reflect.Type, isCollection bool) string {
+	ethType := typToEth(fieldType)
+	if ethType == "" {
+		return ""
+	}
+
+	if isCollection && fieldType.Kind() != reflect.Slice && fieldType.Kind() != reflect.Array {
+		return ethType + "[]"
+	}
+
+	return ethType
+}
+
+func structFieldType(field traversedField) string {
+	fieldType := sanitizeTypedef(field.prefix)
+	if field.isCollection {
+		return fieldType + "[]"
+	}
+
+	return fieldType
+}
+
+func appendTypedField(typeMap apitypes.Types, rootType, prefix, name, fieldType string) {
+	typeName := typeDefinitionName(rootType, prefix)
+	typeMap[typeName] = append(typeMap[typeName], apitypes.Type{Name: name, Type: fieldType})
 }
 
 func jsonNameFromTag(tag reflect.StructTag) string {
@@ -399,63 +439,71 @@ var (
 	edType = reflect.TypeOf(ed25519.PubKey{})
 )
 
+var basicEthereumTypes = map[reflect.Kind]string{
+	reflect.String: "string",
+	reflect.Bool:   "bool",
+	reflect.Int:    "int64",
+	reflect.Int8:   "int8",
+	reflect.Int16:  "int16",
+	reflect.Int32:  "int32",
+	reflect.Int64:  "int64",
+	reflect.Uint:   "uint64",
+	reflect.Uint8:  "uint8",
+	reflect.Uint16: "uint16",
+	reflect.Uint32: "uint32",
+	reflect.Uint64: "uint64",
+}
+
+var ethereumStringTypes = []reflect.Type{
+	hashType,
+	addressType,
+	bigIntType,
+	edType,
+	timeType,
+	cosmDecType,
+	cosmIntType,
+}
+
+var ethereumPointerStringTypes = []reflect.Type{
+	bigIntType,
+	edType,
+	timeType,
+	cosmDecType,
+	cosmIntType,
+}
+
 // typToEth supports only basic types and arrays of basic types.
 // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md
 func typToEth(typ reflect.Type) string {
-	const str = "string"
+	if ethType := basicEthereumTypes[typ.Kind()]; ethType != "" {
+		return ethType
+	}
 
 	switch typ.Kind() {
-	case reflect.String:
-		return str
-	case reflect.Bool:
-		return "bool"
-	case reflect.Int:
-		return "int64"
-	case reflect.Int8:
-		return "int8"
-	case reflect.Int16:
-		return "int16"
-	case reflect.Int32:
-		return "int32"
-	case reflect.Int64:
-		return "int64"
-	case reflect.Uint:
-		return "uint64"
-	case reflect.Uint8:
-		return "uint8"
-	case reflect.Uint16:
-		return "uint16"
-	case reflect.Uint32:
-		return "uint32"
-	case reflect.Uint64:
-		return "uint64"
-	case reflect.Slice:
-		ethName := typToEth(typ.Elem())
-		if len(ethName) > 0 {
-			return ethName + "[]"
-		}
-	case reflect.Array:
-		ethName := typToEth(typ.Elem())
-		if len(ethName) > 0 {
-			return ethName + "[]"
-		}
+	case reflect.Slice, reflect.Array:
+		return ethereumCollectionType(typ)
 	case reflect.Ptr:
-		if typ.Elem().ConvertibleTo(bigIntType) ||
-			typ.Elem().ConvertibleTo(timeType) ||
-			typ.Elem().ConvertibleTo(edType) ||
-			typ.Elem().ConvertibleTo(cosmDecType) ||
-			typ.Elem().ConvertibleTo(cosmIntType) {
-			return str
-		}
+		return ethereumConvertibleType(typ.Elem(), ethereumPointerStringTypes)
 	case reflect.Struct:
-		if typ.ConvertibleTo(hashType) ||
-			typ.ConvertibleTo(addressType) ||
-			typ.ConvertibleTo(bigIntType) ||
-			typ.ConvertibleTo(edType) ||
-			typ.ConvertibleTo(timeType) ||
-			typ.ConvertibleTo(cosmDecType) ||
-			typ.ConvertibleTo(cosmIntType) {
-			return str
+		return ethereumConvertibleType(typ, ethereumStringTypes)
+	}
+
+	return ""
+}
+
+func ethereumCollectionType(typ reflect.Type) string {
+	elementType := typToEth(typ.Elem())
+	if elementType == "" {
+		return ""
+	}
+
+	return elementType + "[]"
+}
+
+func ethereumConvertibleType(typ reflect.Type, supported []reflect.Type) string {
+	for _, candidate := range supported {
+		if typ.ConvertibleTo(candidate) {
+			return "string"
 		}
 	}
 

@@ -6,15 +6,15 @@ import (
 	"testing"
 
 	sdkmath "cosmossdk.io/math"
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
+	transfertypes "github.com/cosmos/ibc-go/v11/modules/apps/transfer/types"
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/chain/cosmos"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	"github.com/cosmos/interchaintest/v11/testreporter"
+	"github.com/cosmos/interchaintest/v11/testutil"
 	relayerinterchaintest "github.com/cosmos/relayer/v2/interchaintest"
 	"github.com/cosmos/relayer/v2/relayer"
 	"github.com/cosmos/relayer/v2/relayer/processor"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/chain/cosmos"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
-	"github.com/strangelove-ventures/interchaintest/v8/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 	"golang.org/x/sync/errgroup"
@@ -29,7 +29,7 @@ func TestScenarioPathFilterAllow(t *testing.T) {
 
 	// Chain Factory
 	cf := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), []*interchaintest.ChainSpec{
-		{Name: "gaia", Version: "v14.1.0", NumValidators: &nv, NumFullNodes: &nf},
+		{Name: "gaia", Version: "v14.1.0", NumValidators: &nv, NumFullNodes: &nf, ChainConfig: gaiaChainConfig("v14.1.0", ibc.ChainConfig{})},
 		{Name: "osmosis", Version: "v22.0.0", NumValidators: &nv, NumFullNodes: &nf},
 	})
 
@@ -79,10 +79,12 @@ func TestScenarioPathFilterAllow(t *testing.T) {
 	gaiaChannel := gaiaChans[0]
 	osmosisChannel := gaiaChans[0].Counterparty
 
-	r.UpdatePath(ctx, eRep, ibcPath, ibc.ChannelFilter{
-		Rule:        processor.RuleAllowList,
-		ChannelList: []string{gaiaChannel.ChannelID},
-	})
+	require.NoError(t, r.UpdatePath(ctx, eRep, ibcPath, ibc.PathUpdateOptions{
+		ChannelFilter: &ibc.ChannelFilter{
+			Rule:        processor.RuleAllowList,
+			ChannelList: []string{gaiaChannel.ChannelID},
+		},
+	}))
 
 	// Create and Fund User Wallets
 	initBal := sdkmath.NewInt(10_000_000)
@@ -90,15 +92,8 @@ func TestScenarioPathFilterAllow(t *testing.T) {
 
 	gaiaUser, osmosisUser := users[0].(*cosmos.CosmosWallet), users[1].(*cosmos.CosmosWallet)
 
-	r.StartRelayer(ctx, eRep, ibcPath)
-	t.Cleanup(
-		func() {
-			err := r.StopRelayer(ctx, eRep)
-			if err != nil {
-				t.Logf("an error occurred while stopping the relayer: %s", err)
-			}
-		},
-	)
+	require.NoError(t, r.StartRelayer(ctx, eRep, ibcPath))
+	t.Cleanup(func() { stopRelayerForTest(t, ctx, r, eRep) })
 
 	// Send Transaction
 	amountToSend := sdkmath.NewInt(1_000_000)
@@ -113,48 +108,20 @@ func TestScenarioPathFilterAllow(t *testing.T) {
 
 	var eg errgroup.Group
 	eg.Go(func() error {
-		tx, err := gaia.SendIBCTransfer(ctx, gaiaChannel.ChannelID, gaiaUser.KeyName(), ibc.WalletAmount{
-			Address: gaiaDstAddress,
-			Denom:   gaia.Config().Denom,
-			Amount:  amountToSend,
-		},
-			ibc.TransferOptions{},
-		)
-		if err != nil {
-			return err
-		}
-		if err := tx.Validate(); err != nil {
-			return err
-		}
-		_, err = testutil.PollForAck(ctx, gaia, gaiaHeight, gaiaHeight+10, tx.Packet)
-		return err
+		return sendPathFilterTransfer(ctx, gaia, gaiaChannel.ChannelID, gaiaUser, gaiaDstAddress, amountToSend, gaiaHeight, true)
 	})
 
 	eg.Go(func() error {
-		tx, err := osmosis.SendIBCTransfer(ctx, osmosisChannel.ChannelID, osmosisUser.KeyName(), ibc.WalletAmount{
-			Address: osmosisDstAddress,
-			Denom:   osmosis.Config().Denom,
-			Amount:  amountToSend,
-		},
-			ibc.TransferOptions{},
-		)
-		if err != nil {
-			return err
-		}
-		if err := tx.Validate(); err != nil {
-			return err
-		}
-		_, err = testutil.PollForAck(ctx, osmosis, osmosisHeight, osmosisHeight+10, tx.Packet)
-		return err
+		return sendPathFilterTransfer(ctx, osmosis, osmosisChannel.ChannelID, osmosisUser, osmosisDstAddress, amountToSend, osmosisHeight, true)
 	})
 	// Acks should exist
 	require.NoError(t, eg.Wait())
 
 	// Trace IBC Denom
-	gaiaDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(osmosisChannel.PortID, osmosisChannel.ChannelID, gaia.Config().Denom))
+	gaiaDenomTrace := transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(osmosisChannel.PortID, osmosisChannel.ChannelID, gaia.Config().Denom))
 	gaiaIbcDenom := gaiaDenomTrace.IBCDenom()
 
-	osmosisDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(gaiaChannel.PortID, gaiaChannel.ChannelID, osmosis.Config().Denom))
+	osmosisDenomTrace := transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(gaiaChannel.PortID, gaiaChannel.ChannelID, osmosis.Config().Denom))
 	osmosisIbcDenom := osmosisDenomTrace.IBCDenom()
 
 	// Test destination wallets have increased funds
@@ -176,7 +143,7 @@ func TestScenarioPathFilterDeny(t *testing.T) {
 
 	// Chain Factory
 	cf := interchaintest.NewBuiltinChainFactory(zaptest.NewLogger(t), []*interchaintest.ChainSpec{
-		{Name: "gaia", Version: "v14.1.0", NumValidators: &nv, NumFullNodes: &nf},
+		{Name: "gaia", Version: "v14.1.0", NumValidators: &nv, NumFullNodes: &nf, ChainConfig: gaiaChainConfig("v14.1.0", ibc.ChainConfig{})},
 		{Name: "osmosis", Version: "v22.0.0", NumValidators: &nv, NumFullNodes: &nf},
 	})
 
@@ -225,10 +192,12 @@ func TestScenarioPathFilterDeny(t *testing.T) {
 	gaiaChannel := gaiaChans[0]
 	osmosisChannel := gaiaChans[0].Counterparty
 
-	r.UpdatePath(ctx, eRep, ibcPath, ibc.ChannelFilter{
-		Rule:        processor.RuleDenyList,
-		ChannelList: []string{gaiaChannel.ChannelID},
-	})
+	require.NoError(t, r.UpdatePath(ctx, eRep, ibcPath, ibc.PathUpdateOptions{
+		ChannelFilter: &ibc.ChannelFilter{
+			Rule:        processor.RuleDenyList,
+			ChannelList: []string{gaiaChannel.ChannelID},
+		},
+	}))
 
 	// Create and Fund User Wallets
 	initBal := sdkmath.NewInt(10_000_000)
@@ -236,15 +205,8 @@ func TestScenarioPathFilterDeny(t *testing.T) {
 
 	gaiaUser, osmosisUser := users[0].(*cosmos.CosmosWallet), users[1].(*cosmos.CosmosWallet)
 
-	r.StartRelayer(ctx, eRep, ibcPath)
-	t.Cleanup(
-		func() {
-			err := r.StopRelayer(ctx, eRep)
-			if err != nil {
-				t.Logf("an error occurred while stopping the relayer: %s", err)
-			}
-		},
-	)
+	require.NoError(t, r.StartRelayer(ctx, eRep, ibcPath))
+	t.Cleanup(func() { stopRelayerForTest(t, ctx, r, eRep) })
 
 	// Send Transaction
 	amountToSend := sdkmath.NewInt(1_000_000)
@@ -259,60 +221,20 @@ func TestScenarioPathFilterDeny(t *testing.T) {
 
 	var eg errgroup.Group
 	eg.Go(func() error {
-		tx, err := gaia.SendIBCTransfer(ctx, gaiaChannel.ChannelID, gaiaUser.KeyName(), ibc.WalletAmount{
-			Address: gaiaDstAddress,
-			Denom:   gaia.Config().Denom,
-			Amount:  amountToSend,
-		},
-			ibc.TransferOptions{},
-		)
-		if err != nil {
-			return err
-		}
-		if err := tx.Validate(); err != nil {
-			return err
-		}
-
-		// we want an error here
-		ack, err := testutil.PollForAck(ctx, gaia, gaiaHeight, gaiaHeight+10, tx.Packet)
-		if err == nil {
-			return fmt.Errorf("no error when error was expected when polling for ack: %+v", ack)
-		}
-
-		return nil
+		return sendPathFilterTransfer(ctx, gaia, gaiaChannel.ChannelID, gaiaUser, gaiaDstAddress, amountToSend, gaiaHeight, false)
 	})
 
 	eg.Go(func() error {
-		tx, err := osmosis.SendIBCTransfer(ctx, osmosisChannel.ChannelID, osmosisUser.KeyName(), ibc.WalletAmount{
-			Address: osmosisDstAddress,
-			Denom:   osmosis.Config().Denom,
-			Amount:  amountToSend,
-		},
-			ibc.TransferOptions{},
-		)
-		if err != nil {
-			return err
-		}
-		if err := tx.Validate(); err != nil {
-			return err
-		}
-
-		// we want an error here
-		ack, err := testutil.PollForAck(ctx, osmosis, osmosisHeight, osmosisHeight+10, tx.Packet)
-		if err == nil {
-			return fmt.Errorf("no error when error was expected when polling for ack: %+v", ack)
-		}
-
-		return nil
+		return sendPathFilterTransfer(ctx, osmosis, osmosisChannel.ChannelID, osmosisUser, osmosisDstAddress, amountToSend, osmosisHeight, false)
 	})
 	// Test that acks do not show up
 	require.NoError(t, eg.Wait())
 
 	// Trace IBC Denom
-	gaiaDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(osmosisChannel.PortID, osmosisChannel.ChannelID, gaia.Config().Denom))
+	gaiaDenomTrace := transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(osmosisChannel.PortID, osmosisChannel.ChannelID, gaia.Config().Denom))
 	gaiaIbcDenom := gaiaDenomTrace.IBCDenom()
 
-	osmosisDenomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom(gaiaChannel.PortID, gaiaChannel.ChannelID, osmosis.Config().Denom))
+	osmosisDenomTrace := transfertypes.ExtractDenomFromPath(transfertypes.GetPrefixedDenom(gaiaChannel.PortID, gaiaChannel.ChannelID, osmosis.Config().Denom))
 	osmosisIbcDenom := osmosisDenomTrace.IBCDenom()
 
 	// Test destination wallets do not have increased funds
@@ -323,4 +245,43 @@ func TestScenarioPathFilterDeny(t *testing.T) {
 	osmosisIBCBalance, err := gaia.GetBalance(ctx, osmosisDstAddress, osmosisIbcDenom)
 	require.NoError(t, err)
 	require.True(t, sdkmath.ZeroInt().Equal(osmosisIBCBalance))
+}
+
+func stopRelayerForTest(t *testing.T, ctx context.Context, r ibc.Relayer, rep ibc.RelayerExecReporter) {
+	t.Helper()
+	if err := r.StopRelayer(ctx, rep); err != nil {
+		t.Logf("an error occurred while stopping the relayer: %s", err)
+	}
+}
+
+func sendPathFilterTransfer(
+	ctx context.Context,
+	chain ibc.Chain,
+	channelID string,
+	user ibc.Wallet,
+	destination string,
+	amount sdkmath.Int,
+	startHeight int64,
+	expectAck bool,
+) error {
+	tx, err := chain.SendIBCTransfer(ctx, channelID, user.KeyName(), ibc.WalletAmount{
+		Address: destination,
+		Denom:   chain.Config().Denom,
+		Amount:  amount,
+	}, ibc.TransferOptions{})
+	if err != nil {
+		return err
+	}
+	if err := tx.Validate(); err != nil {
+		return err
+	}
+
+	ack, pollErr := testutil.PollForAck(ctx, chain, startHeight, startHeight+10, tx.Packet)
+	if expectAck {
+		return pollErr
+	}
+	if pollErr == nil {
+		return fmt.Errorf("no error when error was expected when polling for ack: %+v", ack)
+	}
+	return nil
 }

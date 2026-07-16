@@ -4,13 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cosmos/interchaintest/v11"
+	"github.com/cosmos/interchaintest/v11/conformance"
+	"github.com/cosmos/interchaintest/v11/ibc"
+	interchaintestrelayer "github.com/cosmos/interchaintest/v11/relayer"
+	"github.com/cosmos/interchaintest/v11/testreporter"
 	relayerinterchaintest "github.com/cosmos/relayer/v2/interchaintest"
 	"github.com/cosmos/relayer/v2/relayer"
-	"github.com/strangelove-ventures/interchaintest/v8"
-	"github.com/strangelove-ventures/interchaintest/v8/conformance"
-	"github.com/strangelove-ventures/interchaintest/v8/ibc"
-	interchaintestrelayer "github.com/strangelove-ventures/interchaintest/v8/relayer"
-	"github.com/strangelove-ventures/interchaintest/v8/testreporter"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -31,7 +31,7 @@ func interchaintestConformance(t *testing.T, rf interchaintest.RelayerFactory) {
 			Version:       "v14.1.0",
 			NumValidators: &nv,
 			NumFullNodes:  &nf,
-			ChainConfig:   ibc.ChainConfig{ChainID: "cosmoshub-1004"},
+			ChainConfig:   gaiaChainConfig("v14.1.0", ibc.ChainConfig{ChainID: "cosmoshub-1004"}),
 		},
 		{
 			Name:          "osmosis",

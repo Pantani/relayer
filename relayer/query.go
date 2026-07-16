@@ -11,8 +11,8 @@ import (
 	sdkmath "cosmossdk.io/math"
 	"github.com/avast/retry-go/v4"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	chantypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
+	chantypes "github.com/cosmos/ibc-go/v11/modules/core/04-channel/types"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
 	"github.com/cosmos/relayer/v2/relayer/provider"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -263,7 +263,7 @@ func QueryBalance(ctx context.Context, chain *Chain, address string, showDenoms 
 
 		for i, d := range dts {
 			if strings.EqualFold(c.Denom, d.IBCDenom()) {
-				out = append(out, sdk.Coin{Denom: d.GetFullDenomPath(), Amount: c.Amount})
+				out = append(out, sdk.Coin{Denom: d.Path(), Amount: c.Amount})
 				break
 			}
 

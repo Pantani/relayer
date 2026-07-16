@@ -8,12 +8,14 @@ import (
 
 	sdkcodec "github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/codec/types"
-	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
-	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
-	tmclient "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
+	clienttypes "github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
+	ibcexported "github.com/cosmos/ibc-go/v11/modules/core/exported"
+	tmclient "github.com/cosmos/ibc-go/v11/modules/light-clients/07-tendermint"
 )
 
 var tendermintClientCodec = tmClientCodec()
+
+const tendermintClientStateTypeURL = "/ibc.lightclients.tendermint.v1.ClientState"
 
 func tmClientCodec() *sdkcodec.ProtoCodec {
 	interfaceRegistry := types.NewInterfaceRegistry()
@@ -25,6 +27,15 @@ func tmClientCodec() *sdkcodec.ProtoCodec {
 // an appropriate matcher function to determine if the existing client's state matches a proposed new client
 // state constructed from the dst chain.
 func ClientsMatch(ctx context.Context, src, dst ChainProvider, existingClient clienttypes.IdentifiedClientState, newClient ibcexported.ClientState) (string, error) {
+	// The matcher currently knows how to compare Tendermint clients only. QueryClients
+	// may also return sentinel or custom client states whose concrete types are not
+	// linked into the relayer (for example, the legacy localhost v2 state). Filter
+	// those types before unpacking so an unrelated client cannot prevent creation of
+	// a supported Tendermint client.
+	if existingClient.ClientState == nil || existingClient.ClientState.TypeUrl != tendermintClientStateTypeURL {
+		return "", nil
+	}
+
 	existingClientState, err := clienttypes.UnpackClientState(existingClient.ClientState)
 	if err != nil {
 		return "", err
@@ -100,7 +111,7 @@ func cometMatcher(ctx context.Context, src, dst ChainProvider, existingClientID 
 		}
 
 		// Query the src chain for the latest consensus state of the potential matching client.
-		consensusStateResp, err := src.QueryClientConsensusState(ctx, srch, existingClientID, existingClientState.GetLatestHeight())
+		consensusStateResp, err := src.QueryClientConsensusState(ctx, srch, existingClientID, existingClientState.LatestHeight)
 		if err != nil {
 			return "", err
 		}
@@ -122,7 +133,7 @@ func cometMatcher(ctx context.Context, src, dst ChainProvider, existingClientID 
 		}
 
 		// Construct a header for the consensus state of the counterparty chain.
-		ibcHeader, err := dst.QueryIBCHeader(ctx, int64(existingClientState.GetLatestHeight().GetRevisionHeight()))
+		ibcHeader, err := dst.QueryIBCHeader(ctx, int64(existingClientState.LatestHeight.GetRevisionHeight()))
 		if err != nil {
 			return "", err
 		}
