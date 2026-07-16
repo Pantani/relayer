@@ -95,22 +95,30 @@ func MakeCodec(moduleBasics []module.AppModuleBasic, extraCodecs []string, accBe
 }
 
 func MakeCodecConfig(accBech32Prefix, valBech32Prefix string) Codec {
+	signingOptions := signing.Options{
+		AddressCodec:          address.NewBech32Codec(accBech32Prefix),
+		ValidatorAddressCodec: address.NewBech32Codec(valBech32Prefix),
+	}
 	interfaceRegistry, err := types.NewInterfaceRegistryWithOptions(types.InterfaceRegistryOptions{
-		ProtoFiles: proto.HybridResolver,
-		SigningOptions: signing.Options{
-			AddressCodec:          address.NewBech32Codec(accBech32Prefix),
-			ValidatorAddressCodec: address.NewBech32Codec(valBech32Prefix),
-		},
+		ProtoFiles:     proto.HybridResolver,
+		SigningOptions: signingOptions,
 	})
 	if err != nil {
 		panic(err)
 	}
 	marshaler := codec.NewProtoCodec(interfaceRegistry)
+	txConfig, err := tx.NewTxConfigWithOptions(marshaler, tx.ConfigOptions{
+		EnabledSignModes: tx.DefaultSignModes,
+		SigningOptions:   &signingOptions,
+	})
+	if err != nil {
+		panic(err)
+	}
 
 	return Codec{
 		InterfaceRegistry: interfaceRegistry,
 		Marshaler:         marshaler,
-		TxConfig:          tx.NewTxConfig(marshaler, tx.DefaultSignModes),
+		TxConfig:          txConfig,
 		Amino:             codec.NewLegacyAmino(),
 	}
 }
