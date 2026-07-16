@@ -1,10 +1,14 @@
 package cmd_test
 
 import (
+	"encoding/hex"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/client/keys"
 	"github.com/cosmos/cosmos-sdk/codec"
+	"github.com/cosmos/cosmos-sdk/codec/address"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -12,7 +16,137 @@ import (
 	"github.com/cosmos/relayer/v2/internal/relayertest"
 	"github.com/cosmos/relayer/v2/relayer/chains/cosmos"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
+
+type concurrentKeysCase struct {
+	chainName string
+	prefix    string
+	coinType  uint32
+}
+
+type concurrentKeysResult struct {
+	testCase  concurrentKeysCase
+	restore   relayertest.RunResult
+	show      relayertest.RunResult
+	list      relayertest.RunResult
+	export    relayertest.RunResult
+	deleteKey relayertest.RunResult
+	emptyList relayertest.RunResult
+}
+
+func runConcurrentKeysWorkflow(sys *relayertest.System, testCase concurrentKeysCase) concurrentKeysResult {
+	result := concurrentKeysResult{testCase: testCase}
+	coinType := strconv.FormatUint(uint64(testCase.coinType), 10)
+
+	result.restore = sys.Run(zap.NewNop(), "keys", "restore", testCase.chainName, "default", relayertest.ZeroMnemonic, "--coin-type", coinType)
+	if result.restore.Err != nil {
+		return result
+	}
+	result.show = sys.Run(zap.NewNop(), "keys", "show", testCase.chainName, "default")
+	if result.show.Err != nil {
+		return result
+	}
+	result.list = sys.Run(zap.NewNop(), "keys", "list", testCase.chainName)
+	if result.list.Err != nil {
+		return result
+	}
+	result.export = sys.Run(zap.NewNop(), "keys", "export", testCase.chainName, "default")
+	if result.export.Err != nil {
+		return result
+	}
+	result.deleteKey = sys.Run(zap.NewNop(), "keys", "delete", testCase.chainName, "default", "-y")
+	if result.deleteKey.Err != nil {
+		return result
+	}
+	result.emptyList = sys.Run(zap.NewNop(), "keys", "list", testCase.chainName)
+	return result
+}
+
+func requireConcurrentKeysResult(t *testing.T, result concurrentKeysResult) string {
+	t.Helper()
+	require.NoError(t, result.restore.Err)
+	require.NoError(t, result.show.Err)
+	require.NoError(t, result.list.Err)
+	require.NoError(t, result.export.Err)
+	require.NoError(t, result.deleteKey.Err)
+	require.NoError(t, result.emptyList.Err)
+
+	addressString := strings.TrimSpace(result.restore.Stdout.String())
+	require.True(t, strings.HasPrefix(addressString, result.testCase.prefix+"1"))
+	require.Empty(t, result.restore.Stderr.String())
+	require.Equal(t, addressString+"\n", result.show.Stdout.String())
+	require.Empty(t, result.show.Stderr.String())
+	require.Equal(t, "key(default) -> "+addressString+"\n", result.list.Stdout.String())
+	require.Empty(t, result.list.Stderr.String())
+	require.Contains(t, result.export.Stdout.String(), "BEGIN TENDERMINT PRIVATE KEY")
+	require.Empty(t, result.export.Stderr.String())
+	require.Empty(t, result.deleteKey.Stdout.String())
+	require.Equal(t, "key default deleted\n", result.deleteKey.Stderr.String())
+	require.Empty(t, result.emptyList.Stdout.String())
+	require.Contains(t, result.emptyList.Stderr.String(), "no keys found for chain "+result.testCase.chainName)
+
+	registry := codectypes.NewInterfaceRegistry()
+	cryptocodec.RegisterInterfaces(registry)
+	kr := keyring.NewInMemory(codec.NewProtoCodec(registry))
+	require.NoError(t, kr.ImportPrivKey("imported", result.export.Stdout.String(), keys.DefaultKeyPass))
+	info, err := kr.Key("imported")
+	require.NoError(t, err)
+	importedAddress, err := info.GetAddress()
+	require.NoError(t, err)
+	encodedAddress, err := address.NewBech32Codec(result.testCase.prefix).BytesToString(importedAddress)
+	require.NoError(t, err)
+	require.Equal(t, addressString, encodedAddress)
+
+	return hex.EncodeToString(importedAddress)
+}
+
+func TestKeysConcurrentPrefixes(t *testing.T) {
+	t.Parallel()
+
+	testCases := []concurrentKeysCase{
+		{chainName: "cosmosChain", prefix: "cosmos", coinType: 118},
+		{chainName: "osmoChain", prefix: "osmo", coinType: 330},
+	}
+	type concurrentKeysRun struct {
+		testCase concurrentKeysCase
+		sys      *relayertest.System
+	}
+	runs := make([]concurrentKeysRun, 0, len(testCases))
+
+	for _, testCase := range testCases {
+		sys := relayertest.NewSystem(t)
+		_ = sys.MustRun(t, "config", "init")
+		slip44 := 118
+		sys.MustAddChain(t, testCase.chainName, cmd.ProviderConfigWrapper{
+			Type: "cosmos",
+			Value: cosmos.CosmosProviderConfig{
+				AccountPrefix:  testCase.prefix,
+				ChainID:        "test-" + testCase.chainName,
+				KeyringBackend: "test",
+				Timeout:        "10s",
+				Slip44:         &slip44,
+			},
+		})
+		runs = append(runs, concurrentKeysRun{testCase: testCase, sys: sys})
+	}
+
+	start := make(chan struct{})
+	results := make(chan concurrentKeysResult, len(runs))
+	for _, run := range runs {
+		go func() {
+			<-start
+			results <- runConcurrentKeysWorkflow(run.sys, run.testCase)
+		}()
+	}
+	close(start)
+
+	derivedAddresses := make([]string, 0, len(runs))
+	for range runs {
+		derivedAddresses = append(derivedAddresses, requireConcurrentKeysResult(t, <-results))
+	}
+	require.NotEqual(t, derivedAddresses[0], derivedAddresses[1])
+}
 
 func TestKeysList_Empty(t *testing.T) {
 	t.Parallel()
