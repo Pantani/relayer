@@ -4,6 +4,8 @@ RUN apk add --update --no-cache curl make git libc-dev bash gcc linux-headers eu
 
 ARG TARGETARCH
 
+WORKDIR /src
+
 COPY . .
 
 RUN GOOS=linux GOARCH=$TARGETARCH CGO_ENABLED=1 \
