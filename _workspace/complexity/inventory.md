@@ -1,12 +1,12 @@
 # Complexity inventory
 
-Generated: 2026-07-16T14:50:03Z
-Base: `8bbf9e77957e8594c918edbe712462f1520f1153`
+Generated: 2026-07-16T14:56:13Z
+Base: `45cbe7dbd9c5745e2095e807b8ee37b38277a590`
 Tools: `gocyclo@v0.6.0`, `gocognit@v1.2.1`, threshold `-over 10`
 
 | Cyclomatic violations | Cognitive violations | Union | Max cycle | Max cognitive |
 |---:|---:|---:|---:|---:|
-| 46 | 71 | 73 | 48 | 99 |
+| 45 | 71 | 73 | 48 | 99 |
 
 Generated files are excluded only when their first 40 lines contain the canonical `// Code generated ... DO NOT EDIT.` marker.
 
@@ -28,12 +28,12 @@ Generated files are excluded only when their first 40 lines contain the canonica
 | 14 | `relayer/client.go` | 118 | `CreateClient` | `relayer` | 21 | 32 |
 | 15 | `relayer/chains/cosmos/tx.go` | 1395 | `(*CosmosProvider).RelayPacketFromSequence` | `cosmos` | 14 | 29 |
 | 16 | `relayer/chains/penumbra/tx.go` | 1682 | `(*PenumbraProvider).RelayPacketFromSequence` | `penumbra` | 14 | 29 |
-| 17 | `relayer/chains/cosmos/provider.go` | 330 | `(*CosmosProvider).startLivelinessChecks` | `cosmos` | 11 | 28 |
-| 18 | `relayer/chains/penumbra/provider.go` | 283 | `(*PenumbraProvider).startLivelinessChecks` | `penumbra` | 11 | 28 |
-| 19 | `relayer/processor/path_end_runtime.go` | 868 | `(*pathEndRuntime).trackProcessingMessage` | `processor` | 16 | 27 |
-| 20 | `relayer/chains/penumbra/penumbra_chain_processor.go` | 284 | `(*PenumbraChainProcessor).queryCycle` | `penumbra` | 14 | 25 |
-| 21 | `relayer/processor/message_processor.go` | 415 | `(*messageProcessor).sendBatchMessages` | `processor` | 14 | 25 |
-| 22 | `cmd/keys.go` | 77 | `keysAddCmd` | `cmd` | 12 | 25 |
+| 17 | `relayer/chains/penumbra/provider.go` | 283 | `(*PenumbraProvider).startLivelinessChecks` | `penumbra` | 11 | 28 |
+| 18 | `relayer/processor/path_end_runtime.go` | 868 | `(*pathEndRuntime).trackProcessingMessage` | `processor` | 16 | 27 |
+| 19 | `relayer/chains/penumbra/penumbra_chain_processor.go` | 284 | `(*PenumbraChainProcessor).queryCycle` | `penumbra` | 14 | 25 |
+| 20 | `relayer/processor/message_processor.go` | 415 | `(*messageProcessor).sendBatchMessages` | `processor` | 14 | 25 |
+| 21 | `cmd/keys.go` | 77 | `keysAddCmd` | `cmd` | 12 | 25 |
+| 22 | `relayer/chains/cosmos/provider.go` | 337 | `(*CosmosProvider).startLivelinessChecks` | `cosmos` | 9 | 25 |
 | 23 | `relayer/processor/path_processor.go` | 423 | `(*PathProcessor).Run` | `processor` | 17 | 24 |
 | 24 | `interchaintest/stride/setup_test.go` | 120 | `ModifyGenesisStride` | `stride_test` | 13 | 24 |
 | 25 | `relayer/processor/path_end_runtime.go` | 953 | `(*pathEndRuntime).trackFinishedProcessingMessage` | `processor` | 16 | 23 |
