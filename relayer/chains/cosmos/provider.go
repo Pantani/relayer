@@ -319,6 +319,13 @@ func (cc *CosmosProvider) Init(ctx context.Context) error {
 	// set keybase
 	cc.Keybase = keybase
 
+	if len(cc.PCfg.BackupRPCAddrs) == 0 {
+		if cc.log != nil {
+			cc.log.Debug("No backup RPCs defined", zap.String("chain", cc.ChainName()))
+		}
+		return nil
+	}
+
 	// go routine to monitor RPC liveliness
 	go cc.startLivelinessChecks(ctx, timeout)
 
@@ -330,14 +337,6 @@ func (cc *CosmosProvider) Init(ctx context.Context) error {
 func (cc *CosmosProvider) startLivelinessChecks(ctx context.Context, timeout time.Duration) {
 	// list of rpcs & index to keep track of active rpc
 	rpcs := append([]string{cc.PCfg.RPCAddr}, cc.PCfg.BackupRPCAddrs...)
-
-	// exit routine if there is only one rpc client
-	if len(rpcs) <= 1 {
-		if cc.log != nil {
-			cc.log.Debug("No backup RPCs defined", zap.String("chain", cc.ChainName()))
-		}
-		return
-	}
 
 	// log the number of available rpcs
 	cc.log.Debug("Available RPC clients", zap.String("chain", cc.ChainName()), zap.Int("count", len(rpcs)))
