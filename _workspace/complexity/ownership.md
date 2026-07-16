@@ -20,7 +20,7 @@ Base: `origin/main@43612fc928c447d70c7179b21912e38c55761cfa`
 
 ## Campaign ownership
 
-Exclusive worktree lease: `complexity-characterization-engineer` is the only `ACTIVE` editor for provider-message-handlers characterization. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
+Exclusive worktree lease: `complexity-engineer` is the only `ACTIVE` editor for provider-message-handlers production. Handoff requires the previous holder to be `COMPLETED`, `IDLE`, or `INTERRUPTED` first.
 
 | Subwave | Owner | Writable files | Worktree | Status |
 |---|---|---|---|---|
@@ -53,8 +53,8 @@ Exclusive worktree lease: `complexity-characterization-engineer` is the only `AC
 | provider-liveliness characterization | complexity-characterization-engineer | tests for Cosmos/Penumbra `provider.go`; `_workspace/complexity/characterization/provider-liveliness.md` | `/Users/pantani/.codex/worktrees/complexity-providers-liveliness/relayer` | completed; 16 focused/race checks, packages 55 pass, tests max `4/4` |
 | provider-liveliness production | complexity-engineer | `relayer/chains/cosmos/provider.go`, `relayer/chains/penumbra/provider.go` only | same worktree, after characterization approval | completed; targets `5/6, 7/9`, helpers `5/7`, files max `8/9` |
 | provider-liveliness review | complexity-verifier | `_workspace/complexity/reviews/provider-liveliness.md` only | same worktree under exclusive sequential lease | completed; APPROVED |
-| provider-message-handlers characterization | complexity-characterization-engineer | tests for Cosmos/Penumbra `message_handlers.go`; `_workspace/complexity/characterization/provider-message-handlers.md` | `/Users/pantani/.codex/worktrees/complexity-providers-message-handlers/relayer` | active; production files read-only |
-| provider-message-handlers production | complexity-engineer | Cosmos/Penumbra `message_handlers.go` only | same worktree, after characterization approval | pending |
+| provider-message-handlers characterization | complexity-characterization-engineer | tests for Cosmos/Penumbra `message_handlers.go`; `_workspace/complexity/characterization/provider-message-handlers.md` | `/Users/pantani/.codex/worktrees/complexity-providers-message-handlers/relayer` | completed; 39 focused/race cases, packages 94 pass, tests max `2/1` |
+| provider-message-handlers production | complexity-engineer | Cosmos/Penumbra `message_handlers.go` only | same worktree, after characterization approval | active; tests and campaign state read-only |
 | provider-message-handlers review | complexity-verifier | `_workspace/complexity/reviews/provider-message-handlers.md` only | same worktree under exclusive sequential lease | pending |
 
 Two agents must never edit the same file or worktree concurrently. Exactly one editor row may be `active`. Git integration belongs only to `complexity-orchestrator`.
